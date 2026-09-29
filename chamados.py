@@ -308,6 +308,32 @@ def listar_fila(setores=(), prioridades=(), status=()):
     return sorted(encontrados, key=ordem_na_fila)
 
 
+# Pendentes são os chamados que ainda precisam de atenção: todos os status menos o último (Resolvido).
+STATUS_PENDENTES = STATUS[:-1]
+
+
+def contar_chamados():
+    """Números do painel da gestão: chamados por status e pendentes por setor, sem os filtros da fila.
+
+    Opções sem chamados aparecem com zero. Ex.:
+    {"por_status": {"Aberto": 2, "Em atendimento": 1, "Resolvido": 4},
+     "pendentes_por_setor": {"Atendimento": 1, "Financeiro": 0, "Logística": 2, "Suporte Técnico": 0}}
+    """
+    marcadores = ", ".join("?" for _ in STATUS_PENDENTES)
+    with abrir_banco() as conexao:
+        # Cada linha do GROUP BY é um par (opção, quantidade); dict() junta os pares num dicionário.
+        por_status = dict(conexao.execute("SELECT status, COUNT(*) FROM chamados GROUP BY status"))
+        por_setor = dict(conexao.execute(
+            f"SELECT setor, COUNT(*) FROM chamados WHERE status IN ({marcadores}) GROUP BY setor",
+            STATUS_PENDENTES,
+        ))
+    # Percorre as listas oficiais: a ordem é a mesma da tela e o que não tem chamado aparece com zero.
+    return {
+        "por_status": {status: por_status.get(status, 0) for status in STATUS},
+        "pendentes_por_setor": {setor: por_setor.get(setor, 0) for setor in triagem.SETORES},
+    }
+
+
 def atualizar_chamado(protocolo, status, setor, prioridade, observacao=""):
     """Altera status, setor e prioridade e registra no histórico o que mudou, com a observação.
 

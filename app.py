@@ -145,9 +145,60 @@ def localizar_chamado():
         abrir_chamado(chamado["protocolo"])
 
 
+def escolher_na_fila():
+    """Abre o chamado escolhido no seletor da fila e pede para recarregar a tela inteira.
+
+    O seletor fica dentro do fragmento da fila: uma escolha ali re-executa só o fragmento, e os
+    detalhes, que ficam fora dele, só aparecem quando a tela inteira é recarregada.
+    """
+    abrir_chamado(st.session_state["seletor_chamado"])
+    st.session_state["recarregar_tela"] = True
+
+
+# De quanto em quanto tempo o painel e a fila se atualizam sozinhos, trazendo os chamados novos
+# recebidos pelo bot sem ninguém precisar clicar.
+INTERVALO_ATUALIZACAO_SEGUNDOS = 30
+
+
+@st.fragment(run_every=INTERVALO_ATUALIZACAO_SEGUNDOS)
+def painel_e_fila():
+    """Painel e fila, que o Streamlit re-executa sozinhos a cada INTERVALO_ATUALIZACAO_SEGUNDOS.
+
+    Só esta parte da tela é recarregada: localizar, detalhes e exportação ficam fora do fragmento,
+    para o operador que estiver digitando uma observação não perder o texto.
+    """
+    if st.session_state.pop("recarregar_tela", False):
+        st.rerun()  # A escolha no seletor precisa da tela inteira para os detalhes aparecerem.
+    mostrar_painel()
+    mostrar_fila()
+
+
+def mostrar_painel():
+    """Visão geral com os números de todos os chamados; não depende dos filtros da fila."""
+    st.subheader("Visão geral")
+    try:
+        numeros = chamados.contar_chamados()
+    except triagem.TriagemError as erro:
+        st.error(str(erro))
+        return
+    por_status = numeros["por_status"]
+    colunas = st.columns(len(por_status) + 1)  # Uma coluna para cada status e uma para o total.
+    for coluna, (status, quantidade) in zip(colunas, por_status.items()):
+        coluna.metric(status, quantidade, border=True)
+    colunas[-1].metric("Total", sum(por_status.values()), border=True)
+
+    pendentes = numeros["pendentes_por_setor"]
+    st.caption(f"Pendentes por setor: chamados com status {' ou '.join(chamados.STATUS_PENDENTES)}.")
+    for coluna, (setor, quantidade) in zip(st.columns(len(pendentes)), pendentes.items()):
+        coluna.metric(f"Pendentes · {setor}", quantidade, border=True)
+
+
 def mostrar_fila():
     """Filtros, tabela da fila e seleção do chamado para abrir os detalhes."""
     st.subheader("Fila")
+    if st.button("Atualizar fila"):
+        st.rerun()  # O clique recarrega a tela inteira: painel, fila, detalhes e exportação.
+    st.caption(f"O painel e a fila se atualizam sozinhos a cada {INTERVALO_ATUALIZACAO_SEGUNDOS} segundos.")
     colunas = st.columns(3)
     setores = colunas[0].multiselect("Setor", triagem.SETORES, placeholder="Todos")
     prioridades = colunas[1].multiselect("Prioridade", triagem.PRIORIDADES, placeholder="Todas")
@@ -190,7 +241,7 @@ def mostrar_fila():
         [None, *rotulos],
         format_func=lambda protocolo: "Selecione um chamado" if protocolo is None else rotulos[protocolo],
         key="seletor_chamado",
-        on_change=lambda: abrir_chamado(st.session_state["seletor_chamado"]),
+        on_change=escolher_na_fila,
     )
 
 
@@ -371,9 +422,8 @@ def exportar_e_importar():
 
 def aba_gestao():
     st.caption("Área de gestão para uso local: fila por setor, detalhes e acompanhamento dos chamados.")
-    st.button("Atualizar fila")  # Um clique recarrega a tela, trazendo chamados novos recebidos pelo bot.
+    painel_e_fila()
     localizar_chamado()
-    mostrar_fila()
     mostrar_detalhes()
     exportar_e_importar()
 
