@@ -235,7 +235,9 @@ def mostrar_fila():
         hide_index=True,
     )
 
-    rotulos = {c["protocolo"]: f"{c['protocolo']} · {c['prioridade']} · {c['resumo'][:60]}" for c in fila}
+    # Só protocolo e resumo, que nunca mudam depois do registro. Se o rótulo mudasse (com a prioridade,
+    # por exemplo), a tela devolveria o rótulo antigo na atualização automática e fecharia os detalhes.
+    rotulos = {c["protocolo"]: f"{c['protocolo']} · {c['resumo'][:60]}" for c in fila}
     st.selectbox(
         "Abrir detalhes de um chamado da fila",
         [None, *rotulos],
@@ -260,13 +262,7 @@ def mostrar_detalhes():
         return
 
     st.divider()
-    aviso = st.session_state.pop("aviso_detalhes", None)
-    if aviso:
-        st.success(aviso)
-    # O status foi salvo, mas o cliente do Telegram ficou sem aviso: a gestão precisa avisá-lo.
-    alerta = st.session_state.pop("alerta_detalhes", None)
-    if alerta:
-        st.warning(alerta)
+    area_avisos = st.container()  # Os avisos do último salvar aparecem aqui (preenchida depois do formulário).
     st.subheader(f"Chamado {chamado['protocolo']}")
     st.caption(
         f"Criado em {chamados.formatar_data(chamado['criado_em'])} · "
@@ -308,6 +304,17 @@ def mostrar_detalhes():
         salvar = st.form_submit_button("Salvar alterações")
     if salvar:
         salvar_acompanhamento(protocolo, chamado["status"], status, setor, prioridade, observacao)
+    # Os avisos só são lidos numa execução que não está salvando (o salvar termina com st.rerun()):
+    # um segundo clique em "Salvar alterações" durante o envio ao Telegram não apaga o alerta do
+    # primeiro. As chaves levam o protocolo: o aviso de um chamado nunca aparece sobre outro.
+    with area_avisos:
+        aviso = st.session_state.pop(f"aviso_detalhes_{protocolo}", None)
+        if aviso:
+            st.success(aviso)
+        # O status foi salvo, mas o cliente do Telegram ficou sem aviso: a gestão precisa avisá-lo.
+        alerta = st.session_state.pop(f"alerta_detalhes_{protocolo}", None)
+        if alerta:
+            st.warning(alerta)
     mostrar_historico(protocolo)
 
 
@@ -322,14 +329,17 @@ def salvar_acompanhamento(protocolo, status_anterior, status, setor, prioridade,
     except triagem.TriagemError as erro:
         st.error(str(erro))
         return
+    # Chaves com o protocolo: se outro chamado for aberto durante o envio, estes avisos não aparecem
+    # nele; ficam guardados até este chamado ser aberto de novo.
+    chave_aviso, chave_alerta = f"aviso_detalhes_{protocolo}", f"alerta_detalhes_{protocolo}"
     aviso = "Chamado atualizado e registrado no histórico." if alterado else "Nenhuma alteração para salvar."
-    st.session_state["aviso_detalhes"] = aviso
+    st.session_state[chave_aviso] = aviso
     if alterado:
         st.session_state["gravacoes"] = st.session_state.get("gravacoes", 0) + 1
     if alterado and status != status_anterior:
         # Um clique na tela durante o envio interrompe este código, mas o que já está na sessão
         # aparece na próxima execução. Por isso este alerta é gravado antes e trocado pelo resultado.
-        st.session_state["alerta_detalhes"] = (
+        st.session_state[chave_alerta] = (
             "Não foi possível confirmar o aviso ao cliente no Telegram: a tela foi usada durante o envio "
             "(falhas ficam registradas no terminal). O novo status continua salvo; na dúvida, avise o "
             "cliente por outro canal."
@@ -339,7 +349,7 @@ def salvar_acompanhamento(protocolo, status_anterior, status, setor, prioridade,
             resultado = chamados.avisar_cliente_telegram(chamado)
         alerta = None  # "enviado" e "sem_telegram" (chamado da tela ou do CSV) não geram alerta.
         if resultado == "enviado":
-            st.session_state["aviso_detalhes"] = aviso + " Cliente avisado no Telegram."
+            st.session_state[chave_aviso] = aviso + " Cliente avisado no Telegram."
         elif resultado == "sem_token":
             alerta = (
                 "Cliente não avisado no Telegram: o TELEGRAM_BOT_TOKEN não está configurado no arquivo .env "
@@ -352,7 +362,7 @@ def salvar_acompanhamento(protocolo, status_anterior, status, setor, prioridade,
                 "do Telegram; o motivo ficou registrado no terminal). O novo status continua salvo; "
                 "avise o cliente por outro canal."
             )
-        st.session_state["alerta_detalhes"] = alerta
+        st.session_state[chave_alerta] = alerta
     st.rerun()  # Recarrega a fila e os detalhes com os valores gravados.
 
 
