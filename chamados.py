@@ -3,6 +3,8 @@
 A tela (app.py) e o bot (bot.py) registram pela mesma função: analisar_e_registrar(texto, origem).
 Fluxo: validar a mensagem -> classificar com a IA (triagem.py) -> gravar o chamado com um
 protocolo novo e status Aberto, na fila do setor sugerido.
+Antes de registrar, os dois canais chamam consultar_status(texto): mensagem que cita um protocolo
+(ex.: "status do pedido TF-20260929-7STU8D") é uma consulta, respondida sem IA e sem novo chamado.
 
 Cada operação abre e fecha a própria conexão com o banco. Assim a tela e o bot podem rodar ao
 mesmo tempo: se os dois gravarem juntos, o SQLite faz um esperar o outro terminar.
@@ -13,6 +15,7 @@ import hashlib
 import io
 import logging
 import os
+import re
 import secrets
 import sqlite3
 from collections import Counter
@@ -26,12 +29,17 @@ logger = logging.getLogger(__name__)
 
 STATUS = ("Aberto", "Em atendimento", "Resolvido")
 STATUS_INICIAL = "Aberto"
+MAX_CARACTERES_OBSERVACAO = 1000
 
 # Protocolo no formato TF-AAAAMMDD-XXXXXX, gerado pelo Python. O sufixo é sorteado sem 0/O e 1/I,
 # fáceis de confundir ao ditar. A coluna é UNIQUE: se um sorteio repetir, sorteia de novo.
 ALFABETO_PROTOCOLO = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 TAMANHO_SUFIXO_PROTOCOLO = 6
 TENTATIVAS_PROTOCOLO = 5
+# Protocolo citado em qualquer parte de uma mensagem, em maiúsculas ou minúsculas. O sufixo aceita
+# qualquer letra ou número, para um protocolo digitado errado (ex.: O no lugar de 0) virar
+# "não encontrado" em vez de um chamado novo.
+PADRAO_PROTOCOLO = re.compile(r"\bTF-\d{8}-[A-Z0-9]{6}\b", re.IGNORECASE)
 
 # Se a tela e o bot gravarem ao mesmo tempo, um espera até 15 segundos pelo outro.
 TIMEOUT_BANCO_SEGUNDOS = 15
@@ -59,6 +67,17 @@ CREATE TABLE IF NOT EXISTS chamados (
     -- Identifica a mensagem de origem (Telegram ou linha do CSV importado) para não duplicar o
     -- chamado. Fica vazia (NULL) nos envios pela tela: cada clique no botão é um chamado novo.
     origem TEXT UNIQUE
+)"""
+
+# Cada alteração feita na área de gestão vira uma linha aqui, com a observação de quem alterou.
+CRIAR_HISTORICO = """
+CREATE TABLE IF NOT EXISTS historico (
+    id INTEGER PRIMARY KEY,
+    protocolo TEXT NOT NULL REFERENCES chamados(protocolo),
+    registrado_em TEXT NOT NULL,
+    -- O que mudou, em texto (ex.: "Status: Aberto → Em atendimento"); vazio se houve só observação.
+    alteracoes TEXT NOT NULL,
+    observacao TEXT NOT NULL
 )"""
 
 INSERIR = """
@@ -91,6 +110,11 @@ def agora_iso():
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def formatar_data(iso):
+    """Mostra a data ISO gravada no banco como dd/mm/aaaa hh:mm."""
+    return datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M")
+
+
 def erro_de_banco(caminho, erro):
     """Registra o detalhe técnico no terminal e devolve uma mensagem curta para o usuário."""
     logger.warning("Falha no banco de dados %s: %s: %s", caminho, type(erro).__name__, erro)
@@ -116,6 +140,7 @@ def abrir_banco():
     try:
         with conexao:  # commit se o bloco terminar bem; rollback se houver erro
             conexao.execute(CRIAR_TABELA)
+            conexao.execute(CRIAR_HISTORICO)  # bancos criados antes do histórico ganham a tabela aqui
             yield conexao
     except (sqlite3.Error, OSError) as erro:
         raise erro_de_banco(caminho, erro) from erro
@@ -227,6 +252,30 @@ def buscar_por_origem(origem):
         return ler_chamado(conexao, "origem", origem)
 
 
+def consultar_status(texto):
+    """Se a mensagem citar protocolos, devolve uma linha de situação para cada um; senão, None.
+
+    Ex.: "status do pedido TF-20260929-7STU8D" -> ["TF-20260929-7STU8D: Em atendimento, setor ..."].
+    Não chama a IA e não grava chamado. Mostra só status, setor e data, nunca o conteúdo da mensagem.
+    """
+    # dict.fromkeys tira repetições mantendo a ordem em que os protocolos aparecem.
+    protocolos = list(dict.fromkeys(p.upper() for p in PADRAO_PROTOCOLO.findall(texto or "")))
+    if not protocolos:
+        return None
+    situacoes = []
+    with abrir_banco() as conexao:
+        for protocolo in protocolos:
+            chamado = ler_chamado(conexao, "protocolo", protocolo)
+            if chamado is None:
+                situacoes.append(f"{protocolo}: não encontrado. Confira se o protocolo está correto.")
+            else:
+                situacoes.append(
+                    f"{protocolo}: {chamado['status']}, setor {chamado['setor']} "
+                    f"(atualizado em {formatar_data(chamado['atualizado_em'])})"
+                )
+    return situacoes
+
+
 def ordem_na_fila(chamado):
     """Chave de ordenação: prioridade (Alta, Média, Baixa) e, na mesma prioridade, o mais antigo primeiro."""
     return (
@@ -252,30 +301,52 @@ def listar_fila(setores=(), prioridades=(), status=()):
     return sorted(encontrados, key=ordem_na_fila)
 
 
-def atualizar_chamado(protocolo, status, setor, prioridade):
-    """Altera status, setor e prioridade. A mensagem original e a análise da IA não mudam.
+def atualizar_chamado(protocolo, status, setor, prioridade, observacao=""):
+    """Altera status, setor e prioridade e registra no histórico o que mudou, com a observação.
 
-    Devolve (chamado, alterado). Sem mudança, a data da última atualização é mantida.
+    Aceita também só a observação, sem mudar campos. A mensagem original e a análise da IA não mudam.
+    Devolve (chamado, alterado). Sem mudança e sem observação, nada é gravado e a data é mantida.
     """
-    for valor, opcoes, nome in (
-        (status, STATUS, "Status"),
-        (setor, triagem.SETORES, "Setor"),
-        (prioridade, triagem.PRIORIDADES, "Prioridade"),
-    ):
+    campos = (
+        ("status", "Status", status, STATUS),
+        ("setor", "Setor", setor, triagem.SETORES),
+        ("prioridade", "Prioridade", prioridade, triagem.PRIORIDADES),
+    )
+    for _campo, nome, valor, opcoes in campos:
         if valor not in opcoes:
             raise triagem.TriagemError(f"{nome} inválido: escolha uma das opções da lista.")
+    observacao = (observacao or "").strip()
+    if len(observacao) > MAX_CARACTERES_OBSERVACAO:
+        raise triagem.TriagemError(
+            f"A observação tem {len(observacao)} caracteres; o limite é {MAX_CARACTERES_OBSERVACAO}."
+        )
 
     with abrir_banco() as conexao:
         atual = ler_chamado(conexao, "protocolo", protocolo)
         if atual is None:
             raise triagem.TriagemError(f"Chamado {protocolo} não encontrado.")
-        if (atual["status"], atual["setor"], atual["prioridade"]) == (status, setor, prioridade):
+        alteracoes = "; ".join(
+            f"{nome}: {atual[campo]} → {valor}" for campo, nome, valor, _opcoes in campos if atual[campo] != valor
+        )
+        if not alteracoes and not observacao:
             return atual, False
+        agora = agora_iso()
         conexao.execute(
             "UPDATE chamados SET status = ?, setor = ?, prioridade = ?, atualizado_em = ? WHERE protocolo = ?",
-            (status, setor, prioridade, agora_iso(), protocolo),
+            (status, setor, prioridade, agora, protocolo),
+        )
+        conexao.execute(
+            "INSERT INTO historico (protocolo, registrado_em, alteracoes, observacao) VALUES (?, ?, ?, ?)",
+            (protocolo, agora, alteracoes, observacao),
         )
         return ler_chamado(conexao, "protocolo", protocolo), True
+
+
+def listar_historico(protocolo):
+    """Alterações e observações do chamado, da mais recente para a mais antiga."""
+    with abrir_banco() as conexao:
+        linhas = conexao.execute("SELECT * FROM historico WHERE protocolo = ? ORDER BY id DESC", (protocolo,))
+        return [dict(linha) for linha in linhas]
 
 
 # ---------- CSV: exportação e importação do histórico anterior ----------

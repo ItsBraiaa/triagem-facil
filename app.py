@@ -26,13 +26,8 @@ ROTULOS = {
     "justificativa": "Justificativa",
 }
 
-# Chaves do st.session_state onde fica o último envio (chamado registrado OU erro).
-CHAVES_DO_ENVIO = ("chamado", "erro_registro", "erro")
-
-
-def formatar_data(iso):
-    """Mostra a data ISO gravada no banco como dd/mm/aaaa hh:mm."""
-    return datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M")
+# Chaves do st.session_state onde fica o último envio (chamado, consulta de protocolo OU erro).
+CHAVES_DO_ENVIO = ("chamado", "consulta", "erro_registro", "erro")
 
 
 def mostrar_campos(chamado, campos):
@@ -60,6 +55,11 @@ def analisar(texto):
 
     try:
         triagem.validar_mensagem(texto)  # Mensagem vazia para aqui, sem chamar a API.
+        # Mensagem que cita um protocolo é consulta: mostra a situação, sem IA e sem chamado novo.
+        situacoes = chamados.consultar_status(texto)
+        if situacoes:
+            st.session_state["consulta"] = situacoes
+            return
         with st.spinner("Analisando mensagem..."):
             chamado, _novo = chamados.analisar_e_registrar(texto)
         st.session_state["chamado"] = chamado
@@ -81,6 +81,10 @@ def mostrar_ultimo_envio():
         )
         st.subheader("Resultado da análise")
         mostrar_campos(chamado, ROTULOS.items())
+    elif "consulta" in st.session_state:
+        st.info("Consulta de protocolo: nenhum chamado novo foi registrado.")
+        for situacao in st.session_state["consulta"]:
+            st.text(situacao)
     elif "erro_registro" in st.session_state:
         st.error("Falha no registro: " + st.session_state["erro_registro"])
     elif "erro" in st.session_state:
@@ -163,7 +167,7 @@ def mostrar_fila():
                 "Setor": chamado["setor"],
                 "Prioridade": chamado["prioridade"],
                 "Status": chamado["status"],
-                "Criado em": formatar_data(chamado["criado_em"]),
+                "Criado em": chamados.formatar_data(chamado["criado_em"]),
             }
             for chamado in fila
         ],
@@ -200,8 +204,8 @@ def mostrar_detalhes():
         st.success(aviso)
     st.subheader(f"Chamado {chamado['protocolo']}")
     st.caption(
-        f"Criado em {formatar_data(chamado['criado_em'])} · "
-        f"Última atualização em {formatar_data(chamado['atualizado_em'])}"
+        f"Criado em {chamados.formatar_data(chamado['criado_em'])} · "
+        f"Última atualização em {chamados.formatar_data(chamado['atualizado_em'])}"
     )
     campos = (("status", "Status"), ("setor", "Setor responsável"), ("prioridade", "Prioridade"), ("categoria", "Categoria"))
     for coluna, (campo, rotulo) in zip(st.columns(4), campos):
@@ -213,9 +217,10 @@ def mostrar_detalhes():
         ("justificativa", "Justificativa da prioridade sugerida pela IA"),
     ])
 
-    # A data da última atualização entra nas chaves: depois de salvar, os campos
-    # recomeçam com os valores gravados no banco.
-    versao = f"{protocolo}_{chamado['atualizado_em']}"
+    # A data da última atualização e o número de gravações da sessão entram nas chaves: depois de
+    # salvar, os campos recomeçam com os valores do banco e a observação volta em branco (mesmo que
+    # duas gravações caiam no mesmo segundo).
+    versao = f"{protocolo}_{chamado['atualizado_em']}_{st.session_state.get('gravacoes', 0)}"
     with st.form(f"acompanhamento_{protocolo}"):
         st.markdown("**Acompanhamento**")
         colunas = st.columns(3)
@@ -229,16 +234,52 @@ def mostrar_detalhes():
             "Prioridade", triagem.PRIORIDADES, index=triagem.PRIORIDADES.index(chamado["prioridade"]),
             key=f"prioridade_{versao}",
         )
+        observacao = st.text_area(
+            "Observação / justificativa (opcional, fica salva no histórico)",
+            max_chars=chamados.MAX_CARACTERES_OBSERVACAO,
+            placeholder="Ex.: cliente contatado por telefone; troca autorizada.",
+            key=f"observacao_{versao}",
+        )
         salvar = st.form_submit_button("Salvar alterações")
-    if not salvar:
-        return
+    if salvar:
+        salvar_acompanhamento(protocolo, status, setor, prioridade, observacao)
+    mostrar_historico(protocolo)
+
+
+def salvar_acompanhamento(protocolo, status, setor, prioridade, observacao):
+    """Grava as alterações e a observação; em caso de sucesso, recarrega a tela."""
     try:
-        _, alterado = chamados.atualizar_chamado(protocolo, status, setor, prioridade)
+        _, alterado = chamados.atualizar_chamado(protocolo, status, setor, prioridade, observacao)
     except triagem.TriagemError as erro:
         st.error(str(erro))
         return
-    st.session_state["aviso_detalhes"] = "Chamado atualizado." if alterado else "Nenhuma alteração para salvar."
+    st.session_state["aviso_detalhes"] = (
+        "Chamado atualizado e registrado no histórico." if alterado else "Nenhuma alteração para salvar."
+    )
+    if alterado:
+        st.session_state["gravacoes"] = st.session_state.get("gravacoes", 0) + 1
     st.rerun()  # Recarrega a fila e os detalhes com os valores gravados.
+
+
+def mostrar_historico(protocolo):
+    """Lista as alterações e observações do chamado, da mais recente para a mais antiga."""
+    st.markdown("**Histórico**")
+    try:
+        historico = chamados.listar_historico(protocolo)
+    except triagem.TriagemError as erro:
+        st.error(str(erro))
+        return
+    if not historico:
+        st.caption("Nenhuma alteração ou observação registrada ainda.")
+        return
+    for item in historico:
+        with st.container(border=True):
+            st.caption(chamados.formatar_data(item["registrado_em"]))
+            # Texto puro: a observação é digitada livremente e não deve ser interpretada como Markdown.
+            if item["alteracoes"]:
+                st.text(item["alteracoes"])
+            if item["observacao"]:
+                st.text("Observação: " + item["observacao"])
 
 
 def exportar_e_importar():

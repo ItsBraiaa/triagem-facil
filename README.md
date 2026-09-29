@@ -2,12 +2,12 @@
 
 O projeto classifica mensagens de clientes com Python e **Gemini ou OpenRouter** e registra cada mensagem como um **chamado** em um banco **SQLite**. Cada chamado recebe um **protocolo**, vai para a **fila do setor responsável** (Atendimento, Financeiro, Logística ou Suporte Técnico) e é acompanhado na **área de gestão** da tela, com os status Aberto, Em atendimento e Resolvido. As mensagens chegam pela **tela web** (Streamlit) ou pelo **bot do Telegram**, que usam a mesma lógica de registro e podem funcionar ao mesmo tempo. Escolha **Windows, Linux ou Docker**. Configure somente um provedor de IA por execução.
 
-**Fluxo:** mensagem digitada na tela ou enviada ao bot → chamada à IA → validação da resposta → chamado gravado no banco com protocolo, status Aberto e setor sugerido → protocolo e setor informados no mesmo canal → acompanhamento na fila de chamados. A IA interpreta o texto e sugere categoria, prioridade, setor, resumo e justificativa; o Python valida a resposta, gera o protocolo, controla data/hora e grava o banco.
+**Fluxo:** mensagem digitada na tela ou enviada ao bot → chamada à IA → validação da resposta → chamado gravado no banco com protocolo, status Aberto e setor sugerido → protocolo e setor informados no mesmo canal → acompanhamento na fila de chamados. Uma mensagem que cita um protocolo (ex.: “status do pedido TF-20260929-7STU8D”) é uma **consulta**: o canal responde a situação do chamado, sem chamar a IA e sem abrir chamado novo. A IA interpreta o texto e sugere categoria, prioridade, setor, resumo e justificativa; o Python valida a resposta, gera o protocolo, controla data/hora e grava o banco.
 
 | Arquivo | Função |
 |---|---|
 | `triagem.py` | Classificação: prompt, chamada à IA e validação da resposta (categoria, prioridade, setor, resumo e justificativa). |
-| `chamados.py` | Registro dos chamados em SQLite: fluxo compartilhado `analisar_e_registrar`, protocolo, fila, acompanhamento, exportação CSV e importação do histórico CSV anterior. |
+| `chamados.py` | Registro dos chamados em SQLite: fluxo compartilhado `analisar_e_registrar`, consulta por protocolo (`consultar_status`), protocolo, fila, acompanhamento, exportação CSV e importação do histórico CSV anterior. |
 | `app.py` | Tela Streamlit com duas abas: **Registrar mensagem** e **Fila de chamados** (área de gestão). |
 | `bot.py` | Bot do Telegram (long polling), usando a mesma função de registro de `chamados.py`. |
 | `.streamlit/config.toml` | Faz a tela aceitar conexões somente deste computador ao executar localmente. |
@@ -223,7 +223,7 @@ Esse comando encerra a tela e o bot sem apagar a pasta `data`. Os serviços não
 | Windows ou Linux com Python | `triagem.db` na pasta do aplicativo, ou o caminho de `DB_PATH` | `historico.csv` na pasta do aplicativo, ou o caminho de `CSV_PATH` |
 | Docker | `data/triagem.db` na pasta do projeto (`DB_PATH=/app/data/triagem.db`) | `data/historico.csv` (`CSV_PATH=/app/data/historico.csv`) |
 
-O banco é criado no primeiro acesso. Cada chamado guarda: protocolo, data de criação, data da última atualização, mensagem original, categoria, prioridade, resumo, justificativa, setor responsável e status. Respostas inválidas da IA não são gravadas. Se a gravação falhar, a tela ou o bot mostra "Falha no registro" e nenhum protocolo é informado.
+O banco é criado no primeiro acesso. Cada chamado guarda: protocolo, data de criação, data da última atualização, mensagem original, categoria, prioridade, resumo, justificativa, setor responsável e status. O histórico de alterações e observações fica no mesmo arquivo, na tabela `historico`; bancos criados por versões anteriores recebem essa tabela automaticamente no primeiro acesso. Respostas inválidas da IA não são gravadas. Se a gravação falhar, a tela ou o bot mostra "Falha no registro" e nenhum protocolo é informado.
 
 **O CSV deixou de ser gravado a cada análise.** O `historico.csv` da versão anterior não é alterado, movido nem apagado; seu conteúdo entra no banco pela importação explícita da seção 6. Para obter um CSV atualizado, use **Exportar chamados em CSV** na área de gestão.
 
@@ -239,9 +239,12 @@ Abra a tela e clique na aba **Fila de chamados**. A área é destinada ao uso lo
 - **Filtros:** setor, prioridade e status. Filtro vazio significa "todos". Por padrão, a fila mostra os chamados **Aberto** e **Em atendimento**; inclua **Resolvido** no filtro de status para ver os encerrados.
 - **Atualizar fila:** recarrega a tela para exibir chamados recebidos pelo bot desde a última atualização.
 - **Detalhes:** escolha um chamado em **Abrir detalhes de um chamado da fila**, ou digite o protocolo em **Localizar chamado pelo protocolo** (vale também para chamados fora dos filtros; maiúsculas/minúsculas e espaços nas pontas são aceitos).
-- **Acompanhamento:** nos detalhes, altere o **status** (Aberto, Em atendimento, Resolvido) e corrija o **setor** ou a **prioridade**; clique em **Salvar alterações**. A data da última atualização é registrada. A mensagem original, a categoria, o resumo e a justificativa da IA não são alterados.
+- **Acompanhamento:** nos detalhes, altere o **status** (Aberto, Em atendimento, Resolvido — o encerramento do chamado) e corrija o **setor** ou a **prioridade**. Se quiser, escreva uma **observação/justificativa** (até 1.000 caracteres); clique em **Salvar alterações**. A data da última atualização é registrada. A mensagem original, a categoria, o resumo e a justificativa da IA não são alterados.
+- **Histórico:** cada gravação fica salva abaixo do formulário, da mais recente para a mais antiga, com a data, o que mudou (ex.: `Status: Aberto → Em atendimento; Setor: Logística → Financeiro`) e a observação. Também é possível salvar só uma observação, sem mudar campos (ex.: “cliente contatado por telefone”). O histórico não pode ser editado nem apagado pela tela, e as observações são internas: não aparecem na consulta por protocolo nem na exportação CSV. Alterações feitas antes desta versão não aparecem no histórico.
 - **Exportar chamados em CSV:** baixa todos os chamados, do mais antigo para o mais novo, com as colunas `protocolo;criado_em;atualizado_em;mensagem;categoria;prioridade;resumo;justificativa;setor;status`. O arquivo usa ponto e vírgula e UTF-8 com BOM, para o Excel abrir com acentos. Textos que começam com `=`, `+`, `-` ou `@` recebem um apóstrofo no início para a planilha não tratá-los como fórmula.
 - **Importar histórico CSV da versão anterior:** mostra o caminho procurado e, se o arquivo existir, o botão **Importar histórico CSV**. Os registros entram como chamados **Aberto** na fila de **Atendimento** (o CSV antigo não tinha setor nem status), com protocolo novo e a data original como data de criação. A importação pode ser repetida: linhas já importadas são reconhecidas e não geram chamados duplicados; linhas novas acrescentadas ao CSV são importadas. O arquivo é aberto somente para leitura. Linhas com data, categoria ou prioridade inválidas são ignoradas e contadas no resultado.
+
+**Consulta por protocolo (tela e bot):** se a mensagem citar um ou mais protocolos, em qualquer parte do texto e em maiúsculas ou minúsculas (ex.: “status do pedido tf-20260929-7stu8d”), o canal responde, para cada protocolo, o status, o setor e a data da última atualização — por exemplo, `TF-20260929-7STU8D: Em atendimento, setor Logística (atualizado em 29/09/2026 13:21)`. Protocolo inexistente recebe “não encontrado”. A consulta não chama a IA, não cria chamado e não mostra o conteúdo da mensagem original. Qualquer mensagem com protocolo é tratada como consulta: para registrar um problema novo, envie a mensagem sem o protocolo.
 
 **Protocolo:** formato `TF-AAAAMMDD-XXXXXX`, com a data de criação e seis caracteres sorteados pelo Python (sem `0`, `O`, `1` e `I`, para evitar confusão ao ditar). O banco não aceita protocolos repetidos; se um sorteio coincidir com um existente, o Python sorteia outro.
 
@@ -265,8 +268,8 @@ Use estas mensagens fictícias. Os resultados são **expectativas** para orienta
 2. Se usar Telegram, envie `/start` primeiro.
 3. Envie as três mensagens acima, uma por vez. Confira protocolo, setor, categoria, prioridade, resumo e justificativa na resposta.
 4. Na aba **Fila de chamados**, clique em **Atualizar fila** e confira a ordem: a mensagem de prioridade Alta aparece primeiro.
-5. Abra um chamado, mude o status para **Em atendimento** e salve; depois marque outro como **Resolvido** e confira que ele sai da fila padrão.
-6. Localize um chamado pelo protocolo recebido no Telegram.
+5. Abra um chamado, mude o status para **Em atendimento**, escreva uma observação e salve; confira a entrada no **Histórico**. Depois marque outro como **Resolvido** e confira que ele sai da fila padrão.
+6. Localize um chamado pelo protocolo recebido no Telegram e, no bot, envie “status do pedido” seguido do protocolo: a resposta mostra o status que você acabou de alterar.
 7. Encerre os programas, inicie de novo e confirme que os chamados continuam na fila.
 8. Se houver `historico.csv` da versão anterior, importe-o duas vezes e confira que a segunda importação não cria chamados.
 
@@ -298,7 +301,7 @@ Plano B: se o Telegram falhar, use a aba de registro da tela; os dois canais dep
 - As classificações e o setor são produzidos pela IA e podem variar entre envios. A prioridade e o setor são **sugestões** de triagem, corrigíveis na área de gestão.
 - A área de gestão não tem login: é destinada ao uso local, neste computador. Login, WhatsApp, envio de e-mail e hospedagem ficam fora desta versão.
 - A fila não se atualiza sozinha: clique em **Atualizar fila** para ver chamados novos do bot.
-- O protocolo é informado na confirmação, mas o cliente não consulta o andamento pelo bot; a consulta por protocolo é feita pela equipe na área de gestão.
+- A consulta por protocolo não identifica quem pergunta: quem souber o protocolo vê status, setor e data (nunca o conteúdo da mensagem). Mensagens que citam um protocolo são sempre tratadas como consulta, não como chamado novo.
 - O bot só funciona enquanto o processo (`bot.py` ou o contêiner) estiver em execução. Mensagens enviadas com o bot desligado são descartadas ao iniciar. Use uma única instância por token.
 - Apenas texto, até 3.000 caracteres por mensagem; o bot atende só conversas privadas e ignora grupos e mensagens editadas.
 - SQLite grava um chamado por vez: tela e bot podem funcionar juntos, e uma gravação espera a outra por até 15 segundos. Mantenha o banco em disco local (não em pasta de rede).
@@ -341,7 +344,7 @@ Plano B: se o Telegram falhar, use a aba de registro da tela; os dois canais dep
 
 ### Evolução: banco, protocolo, setores, fila e acompanhamento
 
-**Verificado com respostas simuladas** (Linux, Python 3.14.4 e Python 3.11.16, streamlit 1.64.0, requests 2.34.2, python-dotenv 1.2.3, python-telegram-bot 22.8; sem nenhuma chamada real à IA ou ao Telegram). Scripts de verificação temporários, fora do projeto, executaram **114 checagens do núcleo e do bot** e **42 checagens da tela (Streamlit AppTest)**, todas sem falhas nas duas versões do Python:
+**Verificado com respostas simuladas** (Linux, Python 3.14.4 e Python 3.11.16, streamlit 1.64.0, requests 2.34.2, python-dotenv 1.2.3, python-telegram-bot 22.8; sem nenhuma chamada real à IA ou ao Telegram). Scripts de verificação temporários, fora do projeto, executaram **144 checagens do núcleo e do bot** e **52 checagens da tela (Streamlit AppTest)**, todas sem falhas nas duas versões do Python:
 
 - **Setor:** o prompt pede o setor como quinta chave; setores válidos são aceitos sem diferenciar maiúsculas/minúsculas; setor ausente, vazio, não texto ou fora da lista vai para Atendimento; categoria continua separada e validada como antes.
 - **Registro:** mensagem vazia ou longa não chama a API nem cria o banco; um envio gera uma chamada à IA e um chamado com protocolo `TF-AAAAMMDD-XXXXXX`, status Aberto e o setor sugerido; timeout, falha de conexão, HTTP 401/429/500 e respostas inválidas não gravam nada.
@@ -352,6 +355,8 @@ Plano B: se o Telegram falhar, use a aba de registro da tela; os dois canais dep
 - **Importação:** um `historico.csv` gerado pelo código da versão anterior (com fórmulas neutralizadas, aspas, `;`, quebra de linha e acentos) é importado; a segunda importação não cria chamados; o arquivo continua idêntico (mesmo hash e data de modificação); linhas idênticas legítimas são importadas uma vez cada; linha inválida é ignorada e contada; uma linha nova acrescentada ao CSV é importada sozinha; cabeçalho errado, arquivo inexistente e CSV não UTF-8 são recusados sem gravar.
 - **Exportação:** BOM só no início, todas as colunas e linhas, neutralização de fórmulas, acentos e quebras de linha preservados.
 - **Telegram:** a mesma atualização recebida duas vezes gera um único chamado e uma única chamada à IA, e a segunda resposta informa o protocolo existente; outra mensagem com o mesmo texto gera outro chamado; uma gravação concorrente com a mesma origem é barrada pela restrição UNIQUE; na tela, cada envio é um chamado novo.
+- **Histórico:** um banco criado pela versão sem histórico ganha a tabela no primeiro acesso, sem perder chamados; alteração com observação gera uma entrada com o texto do que mudou e a observação sem espaços nas pontas; só observação gera entrada e atualiza a data; sem mudança e com observação em branco nada é gravado; observação acima de 1.000 caracteres é recusada sem gravar nada; ordem do mais recente para o mais antigo; histórico separado por chamado e persistente entre processos; a consulta do cliente não mostra observações; na tela, a observação aparece como texto literal e o campo volta em branco após salvar.
+- **Consulta por protocolo:** mensagem sem protocolo não é consulta (nem abre o banco); protocolo em minúsculas é encontrado; vários protocolos na mesma mensagem são respondidos na ordem, sem repetição, com “não encontrado” para o inexistente; o status alterado aparece na consulta; texto parecido com protocolo não é consulta; a resposta não mostra mensagem nem resumo; tela e bot respondem sem chamar a IA, sem "Analisando mensagem..." e sem criar chamado; com banco inacessível, o bot responde o erro.
 - **Acesso simultâneo:** três processos gravando e lendo o mesmo banco ao mesmo tempo registraram 180 chamados sem erro.
 - **Falha no banco:** pasta sem permissão gera "Falha no registro" na tela, aviso no bot antes de chamar a IA e mensagem clara na fila; o bot não inicia sem banco gravável.
 - **Bot:** `/start` sem IA e sem banco; confirmação com protocolo, setor e "Solicitação registrada.", sem prometer resolução e abaixo de 4096 caracteres; falha ao responder não reprocessa; mensagem longa, erro 429, conteúdo não textual e comando desconhecido têm resposta compreensível.

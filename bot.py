@@ -25,7 +25,8 @@ logger = logging.getLogger("bot")
 TEXTO_INICIAL = (
     "Envie uma mensagem de cliente para registrar uma solicitação. Cada mensagem de texto válida "
     "vira um chamado: você recebe o protocolo, o setor responsável, a categoria, a prioridade, "
-    "o resumo e a justificativa."
+    "o resumo e a justificativa.\n"
+    "Para acompanhar, envie o protocolo (ex.: status do pedido TF-20260929-ABC234)."
 )
 TEXTO_COMANDO_DESCONHECIDO = "Comando não reconhecido. Use /start para ver como usar o bot."
 TEXTO_PEDIR_TEXTO = (
@@ -76,6 +77,11 @@ def formatar_confirmacao(chamado, novo):
     )
 
 
+def formatar_consulta(situacoes):
+    """Resposta a uma mensagem que cita protocolos: a situação de cada um, em texto simples."""
+    return "Situação da solicitação:\n" + "\n".join(situacoes)
+
+
 async def analisar_texto(update, context):
     """Texto do cliente: valida, avisa, analisa e registra, e responde no mesmo chat."""
     texto = update.message.text
@@ -87,6 +93,16 @@ async def analisar_texto(update, context):
         triagem.validar_mensagem(texto)
     except triagem.TriagemError as erro:
         await update.message.reply_text(str(erro))
+        return
+
+    try:
+        # Mensagem que cita um protocolo é consulta: responde a situação, sem IA e sem chamado novo.
+        situacoes = await asyncio.to_thread(chamados.consultar_status, texto)
+    except triagem.TriagemError as erro:
+        await update.message.reply_text(f"{erro}\n{TEXTO_TENTAR_DE_NOVO}")
+        return
+    if situacoes:
+        await update.message.reply_text(formatar_consulta(situacoes))
         return
 
     await update.message.reply_text(TEXTO_ANALISANDO)

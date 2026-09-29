@@ -321,11 +321,13 @@ Solicitada depois da primeira entrega (`PROMPT_EVOLUCAO_TRIAGEM_FACIL.md`). Ampl
 - Detalhes do chamado: protocolo, datas, status, setor, prioridade, categoria, mensagem original, resumo e justificativa.
 - Status: Aberto, Em atendimento e Resolvido. A interface altera o status e corrige setor ou prioridade; toda alteração registra `atualizado_em`. Mensagem original, categoria, resumo e justificativa não são alterados.
 - Botão "Atualizar fila" para exibir chamados recebidos pelo bot.
+- Histórico: tabela `historico` (`protocolo`, `registrado_em`, `alteracoes`, `observacao`). Cada gravação do acompanhamento acrescenta uma linha com o que mudou (ex.: `Status: Aberto → Em atendimento`) e a observação/justificativa opcional (até 1.000 caracteres); só observação também é aceita. O painel do chamado mostra o histórico do mais recente para o mais antigo. As observações são internas: não aparecem na consulta por protocolo nem na exportação. Bancos anteriores recebem a tabela automaticamente.
 
 ### Canais
 
 - Tela e bot chamam a mesma função `chamados.analisar_e_registrar(texto, origem)`.
 - Após salvar, informam que a solicitação foi registrada, com protocolo e setor responsável, sem prometer resolução.
+- Consulta por protocolo: antes de registrar, tela e bot chamam `chamados.consultar_status(texto)`. Se a mensagem citar protocolos (`TF-AAAAMMDD-XXXXXX`, sem diferenciar maiúsculas/minúsculas), o canal responde status, setor e última atualização de cada um (ou "não encontrado"), sem chamar a IA e sem criar chamado. A resposta não mostra o conteúdo da mensagem original.
 - O bot envia `origem = "telegram:<chat_id>:<message_id>"`. Se essa origem já existir, a função devolve o chamado gravado, sem chamar a IA nem gravar. A restrição UNIQUE protege também contra gravações concorrentes.
 
 ### CSV
@@ -347,5 +349,7 @@ Solicitada depois da primeira entrega (`PROMPT_EVOLUCAO_TRIAGEM_FACIL.md`). Ampl
 - [x] Importação repetível sem duplicação, preservando o arquivo original.
 - [x] Reentrega da mesma atualização do Telegram não duplica o chamado nem chama a IA de novo.
 - [x] Canais existentes (tela e bot) funcionando com respostas simuladas após as mudanças.
+- [x] Consulta por protocolo na tela e no bot, sem IA e sem chamado novo.
+- [x] Observação/justificativa salva no histórico a cada alteração de status, setor ou prioridade.
 - [x] Docker verificado com o banco no bind mount (Docker Desktop no Linux: serviços `web`, `bot` e profile `telegram`; banco preservado após `down`).
 - [ ] Integração real com IA e Telegram (pendente de credenciais).
