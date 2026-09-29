@@ -4,7 +4,7 @@
 
 Implemente o projeto descrito neste documento. O escopo já foi escolhido pelo usuário: uma aplicação local simples para um trabalho acadêmico, com entrega em **29/09/2026 às 19h, horário de Brasília**. Priorize concluir o fluxo completo e demonstrável. Este arquivo contém a especificação e o plano; não é necessário produzir novos documentos de planejamento antes de programar.
 
-> **Estado atual (evolução entregue):** o sistema final ampliou este escopo com banco SQLite, protocolo, setores responsáveis, fila de chamados e acompanhamento. As seções abaixo foram atualizadas para refletir o sistema final, e a seção 14 descreve a evolução. Nos pontos de conflito, vale a seção 14.
+> **Estado atual (evolução entregue):** o sistema final ampliou este escopo com banco SQLite, protocolo, setores responsáveis, fila de chamados e acompanhamento e, numa segunda rodada, com tema visual, tempo da triagem automática, aviso ao cliente no Telegram quando o status muda e painel com atualização automática da fila. A instalação e a execução passaram do README para o `COMO_EXECUTAR.md`. As seções abaixo foram atualizadas para refletir o sistema final, e a seção 14 descreve a evolução. Nos pontos de conflito, vale a seção 14.
 
 Trabalhe na pasta `triagem-facil/`, criada ao lado deste documento, preservando arquivos existentes. Tome decisões rotineiras dentro deste escopo. Ao terminar, informe os arquivos entregues, os comandos para executar, as verificações realizadas e qualquer dependência ainda pendente. A implementação deve ser compreensível para alunos explicarem durante a apresentação.
 
@@ -26,10 +26,10 @@ A IA interpreta linguagem natural. O Python controla interface, validação, pro
 - Registro automático de cada análise válida como chamado em banco SQLite, com protocolo (seção 14). O `historico.csv` da versão anterior deixa de ser gravado e pode ser importado.
 - Área de gestão local na tela: fila por setor, filtros, detalhes e acompanhamento de status (seção 14).
 - Mensagens compreensíveis de carregamento, sucesso e falha.
-- README com configuração, execução e roteiro de demonstração.
-- Execução documentada em Windows, Linux e Docker Compose, com arquivos Docker entregues junto do código.
+- README com a descrição do sistema, funcionalidades, verificação e roteiro de demonstração; configuração e execução no `COMO_EXECUTAR.md` (seção 14).
+- Execução documentada em Windows, Linux e Docker Compose (no `COMO_EXECUTAR.md`), com arquivos Docker entregues junto do código.
 
-Ficam fora da entrega: login, chatbot com histórico de conversa, processamento em lote, envio de e-mail, WhatsApp, n8n, hospedagem, dashboards e frameworks de agentes. Banco de dados, protocolo, setores, fila e acompanhamento foram incluídos pela evolução (seção 14). O aplicativo trata uma mensagem por envio. Tela e bot podem funcionar ao mesmo tempo: o SQLite serializa as gravações.
+Ficam fora da entrega: login, chatbot com histórico de conversa, processamento em lote, envio de e-mail, WhatsApp, n8n, hospedagem, dashboards (o painel “Visão geral” da seção 14 é só um resumo de contagens na área de gestão) e frameworks de agentes. Banco de dados, protocolo, setores, fila e acompanhamento foram incluídos pela evolução (seção 14). O aplicativo trata uma mensagem por envio. Tela e bot podem funcionar ao mesmo tempo: o SQLite serializa as gravações.
 
 ## 3. Regras de classificação
 
@@ -148,11 +148,12 @@ triagem-facil/
 ├── bot.py
 ├── triagem.py             # Classificação e validação da resposta da IA.
 ├── chamados.py            # SQLite: registro compartilhado, protocolo, fila, acompanhamento, exportação e importação CSV.
-├── .streamlit/config.toml # Tela local aceita conexões somente de localhost.
+├── .streamlit/config.toml # Tema, barra reduzida (sem "Deploy") e, na execução local, acesso só por localhost.
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
-├── README.md
+├── README.md              # O que o sistema faz, funcionalidades, dados, demonstração, limitações e verificação.
+├── COMO_EXECUTAR.md       # Instalação e execução (Windows, Linux e Docker), .env, uso e problemas comuns.
 ├── Dockerfile
 ├── compose.yaml
 ├── .dockerignore
@@ -162,7 +163,7 @@ triagem-facil/
 
 Manter funções pequenas em `triagem.py` para classificar pela API e validar o resultado, e em `chamados.py` para gravar e consultar os chamados. `app.py` constrói a tela e `bot.py` recebe e responde mensagens. Os dois canais devem chamar as mesmas funções, sem duplicar prompt, validação ou persistência. Usar proteção `if __name__ == "__main__"` nos pontos de entrada. Evitar arquitetura adicional para esse tamanho de aplicação.
 
-No `.gitignore`, incluir `.env`, `.venv/`, `__pycache__/`, `historico.csv`, `*.db`, `*.db-journal` e `data/`. O README deve explicar dependências, chave/modelo, execução, localização do CSV e limitações: requer internet/API disponível e classificações podem variar. Usar como base o `README.md` entregue ao lado desta especificação, copiando e ajustando seu conteúdo para `triagem-facil/README.md` após implementar e conferir os comandos.
+No `.gitignore`, incluir `.env`, `.venv/`, `__pycache__/`, `historico.csv`, `*.db`, `*.db-journal` e `data/`. Dependências, chave/modelo e execução ficam no `COMO_EXECUTAR.md`; o README explica o sistema, a localização dos dados e as limitações: requer internet/API disponível e classificações podem variar. Usar como base o `README.md` entregue ao lado desta especificação, copiando e ajustando seu conteúdo para `triagem-facil/README.md` após implementar e conferir os comandos.
 
 ## 9. Sequência de implementação
 
@@ -267,7 +268,7 @@ Na apresentação, enviar as três mensagens de exemplo pelo celular ou Telegram
 
 ## 13. Windows, Linux e Docker — entrega obrigatória
 
-Entregar o README com passos completos para as três opções: pré-requisitos, configuração das credenciais, início, teste, encerramento, troca de canal e localização dos dados. Os comandos de Windows devem usar diretamente o Python da `.venv`, dispensando alterações de política do PowerShell. No Linux, usar `.venv/bin/python` e explicar o pacote `python3-venv` em distribuições Debian/Ubuntu.
+Entregar o guia de execução (`COMO_EXECUTAR.md`, separado do README na segunda rodada da seção 14) com passos completos para as três opções: pré-requisitos, configuração das credenciais, início, teste, encerramento, troca de canal e localização dos dados. Os comandos de Windows devem usar diretamente o Python da `.venv`, dispensando alterações de política do PowerShell. No Linux, usar `.venv/bin/python` e explicar o pacote `python3-venv` em distribuições Debian/Ubuntu.
 
 ### Contrato Docker
 
@@ -281,7 +282,7 @@ Entregar o README com passos completos para as três opções: pré-requisitos, 
 
 ### Verificação adicional
 
-- [ ] README contém os passos de Windows PowerShell, Linux e Docker, com comandos separados por shell quando necessário.
+- [ ] `COMO_EXECUTAR.md` contém os passos de Windows PowerShell, Linux e Docker, com comandos separados por shell quando necessário.
 - [ ] Configuração Compose validada com `docker compose config --quiet`, evitando imprimir credenciais interpoladas.
 - [ ] Imagem construída e serviço web acessível em `http://localhost:8501`, quando Docker estiver disponível.
 - [ ] O banco no bind mount permanece após parar/recriar o contêiner.
@@ -320,7 +321,7 @@ Solicitada depois da primeira entrega (`PROMPT_EVOLUCAO_TRIAGEM_FACIL.md`). Ampl
 - Ordem: prioridade Alta, Média, Baixa; na mesma prioridade, o chamado mais antigo primeiro.
 - Detalhes do chamado: protocolo, datas, status, setor, prioridade, categoria, mensagem original, resumo e justificativa.
 - Status: Aberto, Em atendimento e Resolvido. A interface altera o status e corrige setor ou prioridade; toda alteração registra `atualizado_em`. Mensagem original, categoria, resumo e justificativa não são alterados.
-- Botão "Atualizar fila" para exibir chamados recebidos pelo bot.
+- Botão "Atualizar fila", que recarrega a tela inteira. O painel "Visão geral" e a fila também se atualizam sozinhos a cada 30 segundos, trazendo os chamados recebidos pelo bot (ver "Segunda rodada" abaixo).
 - Histórico: tabela `historico` (`protocolo`, `registrado_em`, `alteracoes`, `observacao`). Cada gravação do acompanhamento acrescenta uma linha com o que mudou (ex.: `Status: Aberto → Em atendimento`) e a observação/justificativa opcional (até 1.000 caracteres); só observação também é aceita. O painel do chamado mostra o histórico do mais recente para o mais antigo. As observações são internas: não aparecem na consulta por protocolo nem na exportação. Bancos anteriores recebem a tabela automaticamente.
 
 ### Canais
@@ -338,7 +339,7 @@ Solicitada depois da primeira entrega (`PROMPT_EVOLUCAO_TRIAGEM_FACIL.md`). Ampl
 ### Execução
 
 - Windows, Linux e Docker continuam suportados, sem novas dependências.
-- `.streamlit/config.toml` define `server.address = "localhost"` na execução local. No Docker, a porta continua publicada somente em `127.0.0.1`.
+- `.streamlit/config.toml` define `server.address = "localhost"` na execução local e, desde a segunda rodada, o tema (`[theme]` com a fonte, `[theme.light]` e `[theme.dark]`) e a barra de ferramentas sem opções de desenvolvedor (`[client] toolbarMode = "viewer"`). O `Dockerfile` copia essa pasta, então o tema vale também no contêiner; lá, o `--server.address=0.0.0.0` da linha de comando tem precedência sobre o `address` do arquivo, e a porta continua publicada somente em `127.0.0.1`.
 
 ### Critérios de aceite da evolução
 
@@ -352,4 +353,42 @@ Solicitada depois da primeira entrega (`PROMPT_EVOLUCAO_TRIAGEM_FACIL.md`). Ampl
 - [x] Consulta por protocolo na tela e no bot, sem IA e sem chamado novo.
 - [x] Observação/justificativa salva no histórico a cada alteração de status, setor ou prioridade.
 - [x] Docker verificado com o banco no bind mount (Docker Desktop no Linux: serviços `web`, `bot` e profile `telegram`; banco preservado após `down`).
-- [ ] Integração real com IA e Telegram (pendente de credenciais).
+- [x] Classificação real com o Gemini (`gemini-3.1-flash-lite`, os três exemplos classificados corretamente em 29/09/2026, 2 a 12 s por mensagem) e bot real conectado ao Telegram ("Application started").
+- [ ] Integração real com o OpenRouter (não verificada).
+
+### Segunda rodada — tema, tempo da triagem, aviso no Telegram e painel
+
+Quatro melhorias (commits `8e71c64`, `6c27580`, `d2a44ab` e `16f9fbe`), sem dependências novas e sem mudar as tabelas do banco. Tela e bot continuam chamando as mesmas funções de `chamados.py`.
+
+1. **Tema visual (`8e71c64`, depois ajustado para ter versão clara e escura).** `.streamlit/config.toml` ganhou `[theme]` com `font = "sans-serif"` (a fonte que já vem com o Streamlit, sem download) e sem `base` fixa; `[theme.light]` (`primaryColor = "#0E7490"`, `backgroundColor = "#FFFFFF"`, `secondaryBackgroundColor = "#F1F5F9"`, `textColor = "#0F172A"`); `[theme.dark]` (`primaryColor = "#0891B2"`, `backgroundColor = "#0F172A"`, `secondaryBackgroundColor = "#1E293B"`, `textColor = "#E2E8F0"`); e `[client] toolbarMode = "viewer"`, que esconde o botão "Deploy" e as opções de desenvolvedor, mas mantém o menu ⋮ com a troca entre claro e escuro (menu ⋮ > Settings). A seção `[server]` não mudou. O `Dockerfile` copia a pasta `.streamlit` para `/app`, para o tema valer no contêiner; lá, o `--server.address=0.0.0.0` do `CMD` e do `compose.yaml` tem precedência sobre o `address = "localhost"` do arquivo.
+2. **Tempo da triagem automática (`6c27580`).** Tela e bot cronometram `chamados.analisar_e_registrar` (IA, validação e gravação) com `time.perf_counter()` e mostram o tempo com `chamados.formatar_duracao` (uma casa decimal, com vírgula: `3,2 s`).
+   - Tela: a mensagem de sucesso termina com "Triagem automática concluída em 3,2 s.". O valor fica em `st.session_state["duracao_triagem"]` e é apagado a cada novo envio, então falha e consulta por protocolo não mostram um tempo antigo.
+   - Bot: linha "Tempo da triagem automática: 3,2 s" logo depois da justificativa, só para chamado novo; a reentrega da mesma mensagem não mostra tempo.
+   - O tempo não é gravado no banco nem exportado.
+3. **Aviso ao cliente no Telegram quando o status muda (`d2a44ab`).** Em `app.salvar_acompanhamento`, quando a gravação muda o status, a tela chama `chamados.avisar_cliente_telegram(chamado)` depois de salvar. A função devolve:
+   - `"sem_telegram"` se a origem não começa com `telegram:` (chamado da tela ou importado do CSV);
+   - `"sem_token"` se `TELEGRAM_BOT_TOKEN` estiver vazio ou com o placeholder `COLE_...`;
+   - `"enviado"` se o `sendMessage` da API HTTP do Telegram (via `requests`, `chat_id` tirado da origem, texto simples sem `parse_mode`, tempo limite de 10 s) responder HTTP 200 com `ok: true`; qualquer outra resposta ou falha de conexão é `"falhou"`.
+
+   O texto enviado leva só o protocolo e o novo status ("Atualização da sua solicitação TF-...: Novo status: ... Informe o protocolo se precisar falar sobre ela."); as observações são internas. O log mostra só o protocolo e o tipo do erro ou o status HTTP, nunca o token. A tela mostra "Cliente avisado no Telegram." ou um alerta "Cliente não avisado no Telegram: …", e o novo status continua salvo. Um alerta provisório é guardado na sessão antes do envio, para o caso de a tela ser usada durante o envio. Mudança só de setor, prioridade ou observação não gera aviso. O envio sai da própria tela e não depende do `bot.py`; o token é lido do `.env` quando a tela inicia.
+4. **Painel e atualização automática (`16f9fbe`).** `chamados.contar_chamados()` devolve as contagens por status e os pendentes por setor (`STATUS_PENDENTES`: Aberto e Em atendimento), com zero para opções sem chamados, usando `GROUP BY` no SQL e sem os filtros da fila. A aba "Fila de chamados" mostra o painel "Visão geral" (uma métrica por status, "Total" e "Pendentes · <setor>"). `app.painel_e_fila` é um `@st.fragment(run_every=INTERVALO_ATUALIZACAO_SEGUNDOS)`, com a constante igual a 30, que contém só o painel e a fila; localizar, detalhes e exportação/importação ficam fora dele, para a observação que está sendo digitada não se perder. A escolha no seletor da fila recarrega a tela inteira para os detalhes aparecerem. O botão "Atualizar fila" fica na seção da fila e recarrega a tela inteira.
+
+Documentação: o README foi reestruturado (aviso de prova de conceito, o que o sistema faz, funcionalidades, dados, demonstração, limitações e verificação), e a instalação, o `.env`, o uso e os problemas comuns passaram para o `COMO_EXECUTAR.md`.
+
+### Critérios de aceite da segunda rodada
+
+Verificação com respostas simuladas (Linux, Python 3.14.4 e 3.11.16, sem IA nem Telegram reais, credenciais falsas): 473 checagens por versão do Python, todas passando no branch integrado. São 144 de regressão do núcleo e do bot e 52 da tela (Streamlit AppTest), mais as novas: painel e fila 70, tempo da triagem 58, tema 58 e aviso no Telegram 91.
+
+- [x] Tema: `[theme]`, `[theme.light]`, `[theme.dark]` e `[client] toolbarMode = "viewer"` lidos pelo Streamlit 1.64, sem `base` fixa; fonte sem download; no navegador, tema aplicado e botão "Deploy" escondido.
+- [x] `--server.address=0.0.0.0` tem precedência sobre o `address = "localhost"` do arquivo, e o tema continua valendo (provado localmente, fora do Docker).
+- [x] `Dockerfile` copia `.streamlit` e o `.dockerignore` não exclui a pasta (revisado e conferido por script).
+- [ ] Tema dentro de um contêiner Docker (não testado nesta rodada).
+- [x] Tempo da triagem na confirmação da tela e do bot; sem tempo em falha, consulta, mensagem vazia e reentrega; atualizar a tela não chama a IA de novo; confirmação do bot abaixo de 4.096 caracteres.
+- [ ] Tempo exibido numa triagem real pela tela e pelo bot (a integração real registrou 2 a 12 s por mensagem, mas a exibição do tempo com IA real não consta desta verificação).
+- [x] Aviso no Telegram só para chamado do bot e só quando o status muda; texto só com protocolo e novo status; sem token ou com falha, alerta com o status salvo; clique durante o envio; token fora dos logs (Telegram simulado).
+- [ ] Aviso entregue a um cliente real no Telegram (pendente).
+- [ ] Aviso enviado a partir do contêiner Docker (não testado).
+- [x] Painel "Visão geral" com contagens por status, total e pendentes por setor, independente dos filtros; erro compreensível com banco inacessível.
+- [x] Painel e fila se atualizam sozinhos a cada 30 s (no navegador, com chamado gravado por outro processo); texto não salvo da observação preservado; seletor abre os detalhes.
+- [x] Regressão (144 + 52) sem falhas nas duas versões do Python.
+- [ ] Tela integrada no Windows (pendente).
