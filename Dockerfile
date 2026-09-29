@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Apenas o código. O .env não entra na imagem: as credenciais chegam na execução
 # (env_file do compose.yaml).
-COPY triagem.py app.py bot.py ./
+COPY triagem.py chamados.py app.py bot.py ./
 
 EXPOSE 8501
 

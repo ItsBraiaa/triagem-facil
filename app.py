@@ -1,26 +1,48 @@
-"""Tela do Triagem Fácil (Streamlit).
+"""Tela do Triagem Fácil (Streamlit): registro de mensagens e área de gestão dos chamados.
 
-A tela só cuida da interface. A análise com IA, a validação e o CSV ficam em
-triagem.py, na mesma função usada pelo bot: triagem.analisar_e_registrar(texto).
+A tela só cuida da interface. A análise com IA fica em triagem.py e o registro dos chamados
+(SQLite, protocolo e fila) em chamados.py, na mesma função usada pelo bot:
+chamados.analisar_e_registrar(texto).
 
 Executar: python -m streamlit run app.py
+A área de gestão é de uso local: .streamlit/config.toml faz a tela aceitar conexões
+somente deste computador (localhost).
 """
+
+from datetime import datetime
 
 import streamlit as st
 
+import chamados
 import triagem
 
 # Rótulos fixos exibidos acima de cada campo do resultado.
 ROTULOS = {
+    "protocolo": "Protocolo",
+    "setor": "Setor responsável",
     "categoria": "Categoria",
     "prioridade": "Prioridade",
     "resumo": "Resumo",
     "justificativa": "Justificativa",
 }
 
-# Chaves do st.session_state onde fica o último envio (resultado OU erro).
-CHAVES_DO_ENVIO = ("resultado", "erro_registro", "erro")
+# Chaves do st.session_state onde fica o último envio (chamado registrado OU erro).
+CHAVES_DO_ENVIO = ("chamado", "erro_registro", "erro")
 
+
+def formatar_data(iso):
+    """Mostra a data ISO gravada no banco como dd/mm/aaaa hh:mm."""
+    return datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M")
+
+
+def mostrar_campos(chamado, campos):
+    """Mostra cada campo com rótulo em negrito e valor como texto puro (sem Markdown nem HTML)."""
+    for campo, rotulo in campos:
+        st.markdown(f"**{rotulo}**")
+        st.text(chamado[campo])
+
+
+# ---------- Aba "Registrar mensagem" ----------
 
 def avisar_se_falta_configuracao():
     """Mostra no topo a instrução de configuração do .env; a tela continua abrindo."""
@@ -31,7 +53,7 @@ def avisar_se_falta_configuracao():
 
 
 def analisar(texto):
-    """Processa um envio e guarda na sessão o resultado ou o erro."""
+    """Processa um envio e guarda na sessão o chamado registrado ou o erro."""
     # Apaga o envio anterior: se este falhar, o resultado antigo não aparece.
     for chave in CHAVES_DO_ENVIO:
         st.session_state.pop(chave, None)
@@ -39,7 +61,8 @@ def analisar(texto):
     try:
         triagem.validar_mensagem(texto)  # Mensagem vazia para aqui, sem chamar a API.
         with st.spinner("Analisando mensagem..."):
-            st.session_state["resultado"] = triagem.analisar_e_registrar(texto)
+            chamado, _novo = chamados.analisar_e_registrar(texto)
+        st.session_state["chamado"] = chamado
     except triagem.RegistroError as erro:
         # RegistroError vem antes: é um tipo especial de TriagemError.
         st.session_state["erro_registro"] = str(erro)
@@ -49,14 +72,15 @@ def analisar(texto):
 
 def mostrar_ultimo_envio():
     """Mostra o que está na sessão; um rerun comum não chama a API nem grava de novo."""
-    if "resultado" in st.session_state:
-        resultado = st.session_state["resultado"]
+    if "chamado" in st.session_state:
+        chamado = st.session_state["chamado"]
+        # Protocolo (gerado pelo Python) e setor (validado contra a lista) são valores seguros.
+        st.success(
+            f"Solicitação registrada com o protocolo {chamado['protocolo']} "
+            f"e encaminhada para a fila do setor {chamado['setor']}."
+        )
         st.subheader("Resultado da análise")
-        for campo, rotulo in ROTULOS.items():
-            st.markdown(f"**{rotulo}**")
-            # st.text mostra o valor da IA como texto puro (sem Markdown nem HTML).
-            st.text(resultado[campo])
-        st.success("Análise registrada no histórico")
+        mostrar_campos(chamado, ROTULOS.items())
     elif "erro_registro" in st.session_state:
         st.error("Falha no registro: " + st.session_state["erro_registro"])
     elif "erro" in st.session_state:
@@ -64,12 +88,10 @@ def mostrar_ultimo_envio():
         st.info("Para tentar novamente, clique em “Analisar e registrar”.")
 
 
-def main():
-    st.set_page_config(page_title="Triagem Fácil")
-    st.title("Triagem Fácil")
+def aba_registro():
     st.write(
-        "Cole a mensagem de um cliente: a IA sugere categoria, prioridade, resumo "
-        "e justificativa, e a análise é registrada no histórico CSV."
+        "Cole a mensagem de um cliente: a IA sugere categoria, prioridade, setor responsável, "
+        "resumo e justificativa, e o chamado é registrado com um protocolo."
     )
     avisar_se_falta_configuracao()
 
@@ -82,6 +104,203 @@ def main():
     if enviado:
         analisar(texto)
     mostrar_ultimo_envio()
+
+
+# ---------- Aba "Fila de chamados" (área de gestão) ----------
+
+def abrir_chamado(protocolo):
+    """Define qual chamado aparece no painel de detalhes."""
+    st.session_state["protocolo_aberto"] = protocolo
+
+
+def localizar_chamado():
+    """Busca um chamado pelo protocolo, inclusive os que estão fora dos filtros da fila."""
+    with st.form("localizar"):
+        protocolo = st.text_input("Localizar chamado pelo protocolo", placeholder="TF-AAAAMMDD-XXXXXX")
+        buscar = st.form_submit_button("Localizar")
+    if not buscar:
+        return
+    try:
+        chamado = chamados.buscar_por_protocolo(protocolo)
+    except triagem.TriagemError as erro:
+        st.error(str(erro))
+        return
+    if chamado is None:
+        st.warning("Nenhum chamado encontrado com esse protocolo.")
+    else:
+        abrir_chamado(chamado["protocolo"])
+
+
+def mostrar_fila():
+    """Filtros, tabela da fila e seleção do chamado para abrir os detalhes."""
+    st.subheader("Fila")
+    colunas = st.columns(3)
+    setores = colunas[0].multiselect("Setor", triagem.SETORES, placeholder="Todos")
+    prioridades = colunas[1].multiselect("Prioridade", triagem.PRIORIDADES, placeholder="Todas")
+    # Por padrão a fila mostra o que ainda precisa de atenção; inclua "Resolvido" para ver os encerrados.
+    status = colunas[2].multiselect(
+        "Status", chamados.STATUS, default=["Aberto", "Em atendimento"], placeholder="Todos"
+    )
+
+    try:
+        fila = chamados.listar_fila(setores, prioridades, status)
+    except triagem.TriagemError as erro:
+        st.error(str(erro))
+        return
+    if not fila:
+        st.info("Nenhum chamado com esses filtros.")
+        return
+
+    st.caption(
+        f"{len(fila)} chamado(s), ordenados por prioridade (Alta, Média, Baixa) e, "
+        "na mesma prioridade, do mais antigo para o mais novo."
+    )
+    st.dataframe(
+        [
+            {
+                "Protocolo": chamado["protocolo"],
+                "Resumo": chamado["resumo"],
+                "Setor": chamado["setor"],
+                "Prioridade": chamado["prioridade"],
+                "Status": chamado["status"],
+                "Criado em": formatar_data(chamado["criado_em"]),
+            }
+            for chamado in fila
+        ],
+        hide_index=True,
+    )
+
+    rotulos = {c["protocolo"]: f"{c['protocolo']} · {c['prioridade']} · {c['resumo'][:60]}" for c in fila}
+    st.selectbox(
+        "Abrir detalhes de um chamado da fila",
+        [None, *rotulos],
+        format_func=lambda protocolo: "Selecione um chamado" if protocolo is None else rotulos[protocolo],
+        key="seletor_chamado",
+        on_change=lambda: abrir_chamado(st.session_state["seletor_chamado"]),
+    )
+
+
+def mostrar_detalhes():
+    """Painel do chamado aberto: dados originais, análise da IA e formulário de acompanhamento."""
+    protocolo = st.session_state.get("protocolo_aberto")
+    if not protocolo:
+        return
+    try:
+        chamado = chamados.buscar_por_protocolo(protocolo)
+    except triagem.TriagemError as erro:
+        st.error(str(erro))
+        return
+    if chamado is None:
+        st.warning(f"O chamado {protocolo} não foi encontrado.")
+        return
+
+    st.divider()
+    aviso = st.session_state.pop("aviso_detalhes", None)
+    if aviso:
+        st.success(aviso)
+    st.subheader(f"Chamado {chamado['protocolo']}")
+    st.caption(
+        f"Criado em {formatar_data(chamado['criado_em'])} · "
+        f"Última atualização em {formatar_data(chamado['atualizado_em'])}"
+    )
+    campos = (("status", "Status"), ("setor", "Setor responsável"), ("prioridade", "Prioridade"), ("categoria", "Categoria"))
+    for coluna, (campo, rotulo) in zip(st.columns(4), campos):
+        with coluna:
+            mostrar_campos(chamado, [(campo, rotulo)])
+    mostrar_campos(chamado, [
+        ("mensagem", "Mensagem original"),
+        ("resumo", "Resumo"),
+        ("justificativa", "Justificativa da prioridade sugerida pela IA"),
+    ])
+
+    # A data da última atualização entra nas chaves: depois de salvar, os campos
+    # recomeçam com os valores gravados no banco.
+    versao = f"{protocolo}_{chamado['atualizado_em']}"
+    with st.form(f"acompanhamento_{protocolo}"):
+        st.markdown("**Acompanhamento**")
+        colunas = st.columns(3)
+        status = colunas[0].selectbox(
+            "Status", chamados.STATUS, index=chamados.STATUS.index(chamado["status"]), key=f"status_{versao}"
+        )
+        setor = colunas[1].selectbox(
+            "Setor responsável", triagem.SETORES, index=triagem.SETORES.index(chamado["setor"]), key=f"setor_{versao}"
+        )
+        prioridade = colunas[2].selectbox(
+            "Prioridade", triagem.PRIORIDADES, index=triagem.PRIORIDADES.index(chamado["prioridade"]),
+            key=f"prioridade_{versao}",
+        )
+        salvar = st.form_submit_button("Salvar alterações")
+    if not salvar:
+        return
+    try:
+        _, alterado = chamados.atualizar_chamado(protocolo, status, setor, prioridade)
+    except triagem.TriagemError as erro:
+        st.error(str(erro))
+        return
+    st.session_state["aviso_detalhes"] = "Chamado atualizado." if alterado else "Nenhuma alteração para salvar."
+    st.rerun()  # Recarrega a fila e os detalhes com os valores gravados.
+
+
+def exportar_e_importar():
+    """Exportação de todos os chamados em CSV e importação explícita do historico.csv anterior."""
+    st.divider()
+    st.subheader("Exportar e importar")
+    try:
+        dados = chamados.exportar_csv()
+    except triagem.TriagemError as erro:
+        st.error(str(erro))
+    else:
+        st.download_button(
+            "Exportar chamados em CSV",
+            data=dados,
+            file_name=f"chamados_{datetime.now():%Y%m%d-%H%M}.csv",
+            mime="text/csv",
+        )
+
+    with st.expander("Importar histórico CSV da versão anterior"):
+        caminho = chamados.caminho_csv()
+        st.write(
+            "Copia para o banco os registros do historico.csv gerado antes da troca para o banco de dados. "
+            "Os chamados importados entram como Aberto na fila de Atendimento. Pode ser repetida sem "
+            "duplicar registros, e o arquivo original não é alterado."
+        )
+        st.text(f"Arquivo: {caminho}")
+        aviso = st.session_state.pop("aviso_importacao", None)
+        if aviso:
+            st.success(aviso)
+        if not caminho.exists():
+            st.info("Nenhum histórico CSV encontrado nesse caminho.")
+            return
+        if st.button("Importar histórico CSV"):
+            try:
+                totais = chamados.importar_historico_csv(caminho)
+            except triagem.TriagemError as erro:
+                st.error(str(erro))
+                return
+            st.session_state["aviso_importacao"] = (
+                f"{totais['importados']} chamado(s) importado(s), {totais['ja_existiam']} já existia(m) no banco "
+                f"e {totais['invalidas']} linha(s) inválida(s) ignorada(s). O arquivo original não foi alterado."
+            )
+            st.rerun()  # Recarrega a fila com os chamados importados.
+
+
+def aba_gestao():
+    st.caption("Área de gestão para uso local: fila por setor, detalhes e acompanhamento dos chamados.")
+    st.button("Atualizar fila")  # Um clique recarrega a tela, trazendo chamados novos recebidos pelo bot.
+    localizar_chamado()
+    mostrar_fila()
+    mostrar_detalhes()
+    exportar_e_importar()
+
+
+def main():
+    st.set_page_config(page_title="Triagem Fácil", layout="wide")
+    st.title("Triagem Fácil")
+    registro, gestao = st.tabs(["Registrar mensagem", "Fila de chamados"])
+    with registro:
+        aba_registro()
+    with gestao:
+        aba_gestao()
 
 
 # O Streamlit executa este arquivo com __name__ == "__main__".

@@ -1,0 +1,6 @@
+# Configuração da tela ao executar localmente (python -m streamlit run app.py).
+# address = "localhost": a tela e a área de gestão aceitam conexões somente deste computador.
+# No Docker, o compose.yaml usa --server.address=0.0.0.0 dentro do contêiner e publica a
+# porta apenas em 127.0.0.1, com o mesmo efeito.
+[server]
+address = "localhost"
