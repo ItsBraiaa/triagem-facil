@@ -1,0 +1,32 @@
+# Triagem Fácil com Docker Compose. Execute um serviço por vez.
+#   Tela:  docker compose up --build web   (abrir http://localhost:8501)
+#   Bot:   docker compose up --build bot   (serviço do profile "telegram")
+#   Parar os dois, sem apagar ./data:  docker compose --profile telegram down
+# O histórico fica em ./data/historico.csv, no computador (bind mount).
+
+services:
+  web:
+    build: .
+    env_file: .env
+    environment:
+      - CSV_PATH=/app/data/historico.csv
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/app/data
+    command: python -m streamlit run app.py --server.address=0.0.0.0 --server.port=8501
+    ports:
+      # Só este computador acessa a tela (127.0.0.1).
+      - "127.0.0.1:8501:8501"
+
+  bot:
+    build: .
+    # Com profile, o bot só sobe quando pedido pelo nome (docker compose up bot).
+    profiles: [telegram]
+    env_file: .env
+    environment:
+      - CSV_PATH=/app/data/historico.csv
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/app/data
+    command: python bot.py
+    # Sem ports: o bot usa long polling, só faz conexões de saída para o Telegram.
