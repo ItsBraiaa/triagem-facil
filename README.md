@@ -275,12 +275,14 @@ Plano B: se o Telegram falhar, use a tela Streamlit; os dois canais dependem da 
 | Módulo não encontrado | Instale `requirements.txt` usando o mesmo Python da `.venv` usado para executar. |
 | Aviso "Configuração incompleta" | `.env` na pasta do aplicativo, nomes corretos e placeholders `COLE_...` substituídos; reinicie o programa. |
 | "AI_PROVIDER inválido" | Use apenas `gemini` ou `openrouter`. |
+| Chave "tem caracteres inválidos" | Copie a chave de novo, direto do site do provedor, para o `.env`: aspas curvas ou acentos vindos do Word/WhatsApp não são aceitos. Reinicie o programa. |
 | Mensagem com HTTP 401 ou 403 | Chave recusada ou sem permissão: confira a chave do provedor selecionado. |
 | Mensagem com HTTP 400 ou 404 | Identificador do modelo e chave (o Gemini também responde 400 para chave inválida). |
 | Mensagem com HTTP 402 | Saldo ou créditos insuficientes (OpenRouter): confira a conta e o custo do modelo. |
 | Mensagem com HTTP 429 / cota esgotada | Confira os limites do provedor e aguarde a liberação; se quiser trocar de provedor, altere o `.env` e reinicie. |
 | Mensagem com HTTP 5xx, tempo esgotado ou falha de conexão | Serviço indisponível ou internet instável; tente novamente em alguns minutos. |
-| "Resposta inesperada", "incompleta" ou fora do formato | Envie novamente; se repetir, escolha outro modelo. Nada é gravado nesses casos. |
+| "Resposta inesperada", "incompleta", "longo demais" ou fora do formato | Envie novamente; se repetir, escolha outro modelo. Nada é gravado nesses casos. |
+| Bot responde "Ocorreu um erro inesperado" | Veja a linha "Erro inesperado na análise" no terminal do bot e envie a mensagem de novo. |
 | "Falha no registro" / CSV não grava | Feche o arquivo no Excel e confira permissões da pasta. No Linux, arquivos criados pelo Docker em `data/` pertencem ao root. |
 | Bot não responde | Token correto, processo ativo, conversa privada com o bot certo e mensagem nova após iniciar. |
 | "o Telegram recusou o TELEGRAM_BOT_TOKEN" | Copie novamente o token do @BotFather para o `.env`. |
@@ -292,7 +294,7 @@ Plano B: se o Telegram falhar, use a tela Streamlit; os dois canais dependem da 
 
 ## 9. Verificação realizada
 
-**Verificado com respostas simuladas** (Windows 11 Pro, Python 3.12.14 em venv, streamlit 1.64.0, requests 2.34.2, python-dotenv 1.2.3, python-telegram-bot 22.8; sem nenhuma chamada real à IA ou ao Telegram). Um script de verificação temporário, fora do projeto, executou 138 checagens sem falhas:
+**Verificado com respostas simuladas** (Windows 11 Pro, Python 3.12.14 em venv, streamlit 1.64.0, requests 2.34.2, python-dotenv 1.2.3, python-telegram-bot 22.8; sem nenhuma chamada real à IA ou ao Telegram). Um script de verificação temporário, fora do projeto, executou 138 checagens sem falhas; depois da revisão do código, ele foi executado de novo (138 sem falhas) junto com 16 checagens das correções, também sem falhas:
 
 - Mensagem vazia ou acima de 3.000 caracteres: recusada sem chamar a API e sem criar arquivo.
 - JSON válido aceito, inclusive dentro de um único bloco de código; categoria/prioridade fora das opções, campo ausente, valor não texto, texto vazio e resposta não JSON: recusados sem gravação.
@@ -302,6 +304,7 @@ Plano B: se o Telegram falhar, use a tela Streamlit; os dois canais dependem da 
 - Tela (Streamlit AppTest): atualizar a tela não repete chamada nem registro; um novo clique com o mesmo texto conta como nova análise; uma falha não mostra o resultado anterior; valores da IA aparecem como texto literal. A tela iniciou com `streamlit run` e respondeu `ok` em `/_stcore/health`.
 - Bot: `/start` sem IA nem CSV; texto válido gera uma análise, uma linha e a resposta; conteúdo não textual, mensagem longa, comando desconhecido e erro de API têm resposta compreensível; se o envio da resposta falhar após gravar, nada é reprocessado; grupos e edições são ignorados; sem token, o bot sai com mensagem clara; `run_polling` com Telegram simulado descarta pendentes (`drop_pending_updates`) e o token não aparece no terminal.
 - Tela e bot usam as mesmas funções de `triagem.py`; varredura sem chaves ou tokens nos arquivos do projeto.
+- Correções da revisão: categoria e prioridade em maiúsculas/minúsculas diferentes (ex.: "reclamação", "ALTA") viram o valor oficial, e valores fora das opções continuam recusados; chave com aspas curvas gera instrução de configuração na tela e no bot, sem traceback e sem chamar a API; resumo ou justificativa acima de 500 caracteres é recusado sem gravação, mantendo a resposta do bot abaixo do limite de 4096 caracteres do Telegram; no bot, um erro inesperado recebe resposta na conversa em vez de silêncio.
 
 **Não testado neste ambiente:** Linux (comandos da seção 3) e Docker (`docker compose config`, construção da imagem, tela no contêiner e persistência do bind mount), pois o Docker não estava instalado. Os arquivos Docker foram apenas revisados. A execução em Python 3.11 não foi feita: foram conferidas a sintaxe do código e a versão mínima exigida pelas dependências fixadas (3.10).
 

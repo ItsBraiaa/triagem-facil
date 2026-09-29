@@ -32,6 +32,7 @@ TEXTO_PEDIR_TEXTO = (
 )
 TEXTO_ANALISANDO = "Analisando mensagem..."
 TEXTO_TENTAR_DE_NOVO = "Para tentar novamente, envie a mensagem outra vez."
+TEXTO_ERRO_INESPERADO = "Ocorreu um erro inesperado na análise. O motivo foi registrado no terminal do bot."
 
 # Só mensagens NOVAS (edições ficam de fora) em conversa PRIVADA (grupos ficam de fora).
 CONVERSA_PRIVADA = filters.ChatType.PRIVATE & filters.UpdateType.MESSAGE
@@ -86,6 +87,11 @@ async def analisar_texto(update, context):
         return
     except triagem.TriagemError as erro:
         await update.message.reply_text(f"{erro}\n{TEXTO_TENTAR_DE_NOVO}")
+        return
+    except Exception as erro:
+        # Erro não previsto: sem esta resposta, a conversa ficaria parada em "Analisando mensagem...".
+        logger.error("Erro inesperado na análise: %s: %s", type(erro).__name__, erro)
+        await update.message.reply_text(f"{TEXTO_ERRO_INESPERADO}\n{TEXTO_TENTAR_DE_NOVO}")
         return
 
     await enviar_resultado(update, resultado)

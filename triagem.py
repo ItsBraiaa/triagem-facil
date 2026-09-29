@@ -22,6 +22,9 @@ load_dotenv(Path(__file__).with_name(".env"), encoding="utf-8-sig")
 logger = logging.getLogger(__name__)
 
 MAX_CARACTERES = 3000
+# Resumo e justificativa devem ser frases curtas. O limite também mantém a resposta
+# do bot bem abaixo do máximo de 4096 caracteres de uma mensagem do Telegram.
+MAX_CARACTERES_CAMPO = 500
 CATEGORIAS = ("Dúvida", "Reclamação", "Solicitação", "Outros")
 PRIORIDADES = ("Alta", "Média", "Baixa")
 COLUNAS = ["data_hora", "mensagem", "categoria", "prioridade", "resumo", "justificativa"]
@@ -134,6 +137,13 @@ def configuracao_provedor():
             f"Configuração incompleta para AI_PROVIDER={nome}: preencha {' e '.join(faltando)} "
             "no arquivo .env (substituindo os valores COLE_...) e reinicie o programa."
         )
+    # A chave vai no cabeçalho HTTP, que só aceita caracteres simples (ASCII). Aspas curvas
+    # ou acentos costumam aparecer quando a chave é copiada pelo Word ou pelo WhatsApp.
+    if not chave.isascii():
+        raise TriagemError(
+            f"A chave em {variavel_chave} tem caracteres inválidos (por exemplo, aspas curvas). "
+            "Copie a chave novamente, direto do site do provedor, para o arquivo .env e reinicie o programa."
+        )
     return nome, url, chave, modelo
 
 
@@ -220,6 +230,17 @@ def remover_bloco_de_codigo(texto):
     return texto.strip()
 
 
+def opcao_permitida(valor, opcoes):
+    """Devolve a opção oficial que corresponde ao valor, sem diferenciar maiúsculas e minúsculas.
+
+    Ex.: "reclamação" ou "RECLAMAÇÃO" viram "Reclamação". Valor fora das opções devolve None.
+    """
+    for opcao in opcoes:
+        if valor.casefold() == opcao.casefold():
+            return opcao
+    return None
+
+
 def interpretar_resposta(conteudo):
     """Converte o texto da IA em dict e confere as quatro chaves e os valores permitidos."""
     formato_invalido = "A IA não respondeu no formato JSON esperado. Nada foi registrado; tente novamente."
@@ -240,10 +261,18 @@ def interpretar_resposta(conteudo):
             raise TriagemError(f'A resposta da IA veio sem o campo "{campo}" preenchido. Nada foi registrado; tente novamente.')
         resultado[campo] = valor.strip()
 
-    if resultado["categoria"] not in CATEGORIAS:
+    categoria = opcao_permitida(resultado["categoria"], CATEGORIAS)
+    if categoria is None:
         raise TriagemError("A IA sugeriu uma categoria fora das opções permitidas. Nada foi registrado; tente novamente.")
-    if resultado["prioridade"] not in PRIORIDADES:
+    prioridade = opcao_permitida(resultado["prioridade"], PRIORIDADES)
+    if prioridade is None:
         raise TriagemError("A IA sugeriu uma prioridade fora das opções permitidas. Nada foi registrado; tente novamente.")
+    resultado["categoria"] = categoria
+    resultado["prioridade"] = prioridade
+
+    for campo in ("resumo", "justificativa"):
+        if len(resultado[campo]) > MAX_CARACTERES_CAMPO:
+            raise TriagemError(f'A IA devolveu o campo "{campo}" longo demais. Nada foi registrado; tente novamente.')
     return resultado
 
 
