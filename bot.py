@@ -11,6 +11,7 @@ O bot usa long polling: ele só funciona enquanto este programa estiver rodando.
 import asyncio
 import logging
 import sys
+import time
 
 from telegram import Update
 from telegram.error import InvalidToken, TelegramError
@@ -58,12 +59,16 @@ async def pedir_texto(update, context):
     await update.message.reply_text(TEXTO_PEDIR_TEXTO)
 
 
-def formatar_confirmacao(chamado, novo):
-    """Monta a resposta em texto simples: registro, protocolo, setor e análise.
+def formatar_confirmacao(chamado, novo, duracao=None):
+    """Monta a resposta em texto simples: registro, protocolo, setor, análise e tempo da triagem.
 
     Informa que a solicitação foi registrada e está na fila; não diz que o problema foi resolvido.
     """
     inicio = "Solicitação registrada." if novo else "Esta mensagem já tinha sido registrada."
+    # O tempo (em segundos) só aparece para o chamado novo: na reentrega, nenhuma triagem foi feita agora.
+    tempo = ""
+    if novo and duracao is not None:
+        tempo = f"Tempo da triagem automática: {chamados.formatar_duracao(duracao)}\n"
     return (
         f"{inicio}\n"
         f"Protocolo: {chamado['protocolo']}\n"
@@ -71,7 +76,8 @@ def formatar_confirmacao(chamado, novo):
         f"Categoria: {chamado['categoria']}\n"
         f"Prioridade: {chamado['prioridade']}\n"
         f"Resumo: {chamado['resumo']}\n"
-        f"Justificativa: {chamado['justificativa']}\n\n"
+        f"Justificativa: {chamado['justificativa']}\n"
+        f"{tempo}\n"
         "A solicitação está na fila do setor responsável. "
         "Informe o protocolo se precisar falar sobre ela."
     )
@@ -109,7 +115,10 @@ async def analisar_texto(update, context):
     try:
         # analisar_e_registrar usa requests e SQLite, que bloqueiam enquanto esperam.
         # asyncio.to_thread a executa em outra thread para não travar o bot.
+        # Cronometra a triagem automática (IA, validação e gravação) para mostrar na confirmação.
+        inicio = time.perf_counter()
         chamado, novo = await asyncio.to_thread(chamados.analisar_e_registrar, texto, origem)
+        duracao = time.perf_counter() - inicio
     except triagem.RegistroError as erro:
         # RegistroError vem antes: é um tipo especial de TriagemError (a IA respondeu, o banco falhou).
         await update.message.reply_text("Falha no registro: " + str(erro))
@@ -123,13 +132,13 @@ async def analisar_texto(update, context):
         await update.message.reply_text(f"{TEXTO_ERRO_INESPERADO}\n{TEXTO_TENTAR_DE_NOVO}")
         return
 
-    await enviar_confirmacao(update, chamado, novo)
+    await enviar_confirmacao(update, chamado, novo, duracao)
 
 
-async def enviar_confirmacao(update, chamado, novo):
+async def enviar_confirmacao(update, chamado, novo, duracao):
     """Envia a confirmação; se o Telegram falhar, apenas registra no terminal."""
     try:
-        await update.message.reply_text(formatar_confirmacao(chamado, novo))
+        await update.message.reply_text(formatar_confirmacao(chamado, novo, duracao))
     except TelegramError as erro:
         # O chamado já está no banco: não repetimos a análise nem a gravação.
         logger.warning(

@@ -9,6 +9,7 @@ A área de gestão é de uso local: .streamlit/config.toml faz a tela aceitar co
 somente deste computador (localhost).
 """
 
+import time
 from datetime import datetime
 
 import streamlit as st
@@ -26,8 +27,8 @@ ROTULOS = {
     "justificativa": "Justificativa",
 }
 
-# Chaves do st.session_state onde fica o último envio (chamado, consulta de protocolo OU erro).
-CHAVES_DO_ENVIO = ("chamado", "consulta", "erro_registro", "erro")
+# Chaves do st.session_state onde fica o último envio (chamado e tempo da triagem, consulta de protocolo OU erro).
+CHAVES_DO_ENVIO = ("chamado", "duracao_triagem", "consulta", "erro_registro", "erro")
 
 
 def mostrar_campos(chamado, campos):
@@ -61,8 +62,12 @@ def analisar(texto):
             st.session_state["consulta"] = situacoes
             return
         with st.spinner("Analisando mensagem..."):
+            # Cronometra a triagem automática (IA, validação e gravação) para mostrar na confirmação.
+            inicio = time.perf_counter()
             chamado, _novo = chamados.analisar_e_registrar(texto)
+            duracao = time.perf_counter() - inicio
         st.session_state["chamado"] = chamado
+        st.session_state["duracao_triagem"] = duracao
     except triagem.RegistroError as erro:
         # RegistroError vem antes: é um tipo especial de TriagemError.
         st.session_state["erro_registro"] = str(erro)
@@ -74,11 +79,16 @@ def mostrar_ultimo_envio():
     """Mostra o que está na sessão; um rerun comum não chama a API nem grava de novo."""
     if "chamado" in st.session_state:
         chamado = st.session_state["chamado"]
-        # Protocolo (gerado pelo Python) e setor (validado contra a lista) são valores seguros.
-        st.success(
+        # Protocolo e tempo (gerados pelo Python) e setor (validado contra a lista) são valores seguros.
+        mensagem = (
             f"Solicitação registrada com o protocolo {chamado['protocolo']} "
             f"e encaminhada para a fila do setor {chamado['setor']}."
         )
+        # Uma sessão aberta antes desta versão do app não tem o tempo guardado: mostra sem ele.
+        if "duracao_triagem" in st.session_state:
+            tempo = chamados.formatar_duracao(st.session_state["duracao_triagem"])
+            mensagem += f" Triagem automática concluída em {tempo}."
+        st.success(mensagem)
         st.subheader("Resultado da análise")
         mostrar_campos(chamado, ROTULOS.items())
     elif "consulta" in st.session_state:

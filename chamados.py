@@ -115,6 +115,11 @@ def formatar_data(iso):
     return datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M")
 
 
+def formatar_duracao(segundos):
+    """Mostra uma duração em segundos com uma casa decimal e vírgula (ex.: 3.24 -> "3,2 s")."""
+    return f"{segundos:.1f} s".replace(".", ",")
+
+
 def erro_de_banco(caminho, erro):
     """Registra o detalhe técnico no terminal e devolve uma mensagem curta para o usuário."""
     logger.warning("Falha no banco de dados %s: %s: %s", caminho, type(erro).__name__, erro)
