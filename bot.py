@@ -1,8 +1,8 @@
 """Bot do Telegram do Triagem Fácil.
 
-O bot é um segundo canal do mesmo classificador da tela. Cada mensagem de texto
-recebida em conversa privada passa por triagem.analisar_e_registrar(texto), a mesma
-função usada por app.py: chama a IA, valida a resposta e grava o CSV.
+O bot é um segundo canal do mesmo registro da tela. Cada mensagem de texto recebida em
+conversa privada passa por chamados.analisar_e_registrar(texto, origem), a mesma função
+usada por app.py: chama a IA, valida a resposta e grava o chamado no banco com um protocolo.
 
 Executar: python bot.py   (Ctrl+C para encerrar)
 O bot usa long polling: ele só funciona enquanto este programa estiver rodando.
@@ -11,19 +11,23 @@ O bot usa long polling: ele só funciona enquanto este programa estiver rodando.
 import asyncio
 import logging
 import sys
+import time
 
 from telegram import Update
 from telegram.error import InvalidToken, TelegramError
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
+import chamados
 # Importar triagem também carrega o .env da pasta do aplicativo (inclusive TELEGRAM_BOT_TOKEN).
 import triagem
 
 logger = logging.getLogger("bot")
 
 TEXTO_INICIAL = (
-    "Envie uma mensagem de cliente para receber categoria, prioridade, resumo e justificativa. "
-    "Cada análise válida será registrada no CSV local."
+    "Envie uma mensagem de cliente para registrar uma solicitação. Cada mensagem de texto válida "
+    "vira um chamado: você recebe o protocolo, o setor responsável, a categoria, a prioridade, "
+    "o resumo e a justificativa.\n"
+    "Para acompanhar, envie o protocolo (ex.: status do pedido TF-20260929-ABC234)."
 )
 TEXTO_COMANDO_DESCONHECIDO = "Comando não reconhecido. Use /start para ver como usar o bot."
 TEXTO_PEDIR_TEXTO = (
@@ -41,7 +45,7 @@ CONVERSA_PRIVADA = filters.ChatType.PRIVATE & filters.UpdateType.MESSAGE
 # ---------- Respostas do bot ----------
 
 async def iniciar(update, context):
-    """/start: explica o uso. Não chama a IA e não grava o CSV."""
+    """/start: explica o uso. Não chama a IA e não grava chamado."""
     await update.message.reply_text(TEXTO_INICIAL)
 
 
@@ -55,20 +59,41 @@ async def pedir_texto(update, context):
     await update.message.reply_text(TEXTO_PEDIR_TEXTO)
 
 
-def formatar_resultado(resultado):
-    """Monta a resposta em texto simples com os quatro campos e a confirmação do registro."""
+def formatar_confirmacao(chamado, novo, duracao=None):
+    """Monta a resposta em texto simples: registro, protocolo, setor, análise e tempo da triagem.
+
+    Informa que a solicitação foi registrada e está na fila; não diz que o problema foi resolvido.
+    """
+    inicio = "Solicitação registrada." if novo else "Esta mensagem já tinha sido registrada."
+    # O tempo (em segundos) só aparece para o chamado novo: na reentrega, nenhuma triagem foi feita agora.
+    tempo = ""
+    if novo and duracao is not None:
+        tempo = f"Tempo da triagem automática: {chamados.formatar_duracao(duracao)}\n"
     return (
-        f"Categoria: {resultado['categoria']}\n"
-        f"Prioridade: {resultado['prioridade']}\n"
-        f"Resumo: {resultado['resumo']}\n"
-        f"Justificativa: {resultado['justificativa']}\n\n"
-        "Análise registrada no histórico CSV."
+        f"{inicio}\n"
+        f"Protocolo: {chamado['protocolo']}\n"
+        f"Setor responsável: {chamado['setor']}\n\n"
+        f"Categoria: {chamado['categoria']}\n"
+        f"Prioridade: {chamado['prioridade']}\n"
+        f"Resumo: {chamado['resumo']}\n"
+        f"Justificativa: {chamado['justificativa']}\n"
+        f"{tempo}\n"
+        "A solicitação está na fila do setor responsável. "
+        "Informe o protocolo se precisar falar sobre ela."
     )
+
+
+def formatar_consulta(situacoes):
+    """Resposta a uma mensagem que cita protocolos: a situação de cada um, em texto simples."""
+    return "Situação da solicitação:\n" + "\n".join(situacoes)
 
 
 async def analisar_texto(update, context):
     """Texto do cliente: valida, avisa, analisa e registra, e responde no mesmo chat."""
     texto = update.message.text
+    # Identifica esta mensagem: se o Telegram entregar a mesma atualização de novo,
+    # o chamado já gravado é reaproveitado, sem nova chamada à IA e sem duplicar.
+    origem = f"telegram:{update.effective_chat.id}:{update.message.message_id}"
     try:
         # Mensagem vazia ou acima de 3.000 caracteres para aqui, sem chamar a IA.
         triagem.validar_mensagem(texto)
@@ -76,13 +101,26 @@ async def analisar_texto(update, context):
         await update.message.reply_text(str(erro))
         return
 
+    try:
+        # Mensagem que cita um protocolo é consulta: responde a situação, sem IA e sem chamado novo.
+        situacoes = await asyncio.to_thread(chamados.consultar_status, texto)
+    except triagem.TriagemError as erro:
+        await update.message.reply_text(f"{erro}\n{TEXTO_TENTAR_DE_NOVO}")
+        return
+    if situacoes:
+        await update.message.reply_text(formatar_consulta(situacoes))
+        return
+
     await update.message.reply_text(TEXTO_ANALISANDO)
     try:
-        # analisar_e_registrar usa requests, que bloqueia enquanto espera a IA.
+        # analisar_e_registrar usa requests e SQLite, que bloqueiam enquanto esperam.
         # asyncio.to_thread a executa em outra thread para não travar o bot.
-        resultado = await asyncio.to_thread(triagem.analisar_e_registrar, texto)
+        # Cronometra a triagem automática (IA, validação e gravação) para mostrar na confirmação.
+        inicio = time.perf_counter()
+        chamado, novo = await asyncio.to_thread(chamados.analisar_e_registrar, texto, origem)
+        duracao = time.perf_counter() - inicio
     except triagem.RegistroError as erro:
-        # RegistroError vem antes: é um tipo especial de TriagemError (a IA respondeu, o CSV falhou).
+        # RegistroError vem antes: é um tipo especial de TriagemError (a IA respondeu, o banco falhou).
         await update.message.reply_text("Falha no registro: " + str(erro))
         return
     except triagem.TriagemError as erro:
@@ -94,17 +132,18 @@ async def analisar_texto(update, context):
         await update.message.reply_text(f"{TEXTO_ERRO_INESPERADO}\n{TEXTO_TENTAR_DE_NOVO}")
         return
 
-    await enviar_resultado(update, resultado)
+    await enviar_confirmacao(update, chamado, novo, duracao)
 
 
-async def enviar_resultado(update, resultado):
-    """Envia o resultado; se o Telegram falhar, apenas registra no terminal."""
+async def enviar_confirmacao(update, chamado, novo, duracao):
+    """Envia a confirmação; se o Telegram falhar, apenas registra no terminal."""
     try:
-        await update.message.reply_text(formatar_resultado(resultado))
+        await update.message.reply_text(formatar_confirmacao(chamado, novo, duracao))
     except TelegramError as erro:
-        # A linha já está no CSV: não repetimos a análise nem a gravação.
+        # O chamado já está no banco: não repetimos a análise nem a gravação.
         logger.warning(
-            "A análise foi registrada no CSV, mas a resposta não foi enviada ao Telegram (%s: %s).",
+            "O chamado %s foi registrado, mas a resposta não foi enviada ao Telegram (%s: %s).",
+            chamado["protocolo"],
             type(erro).__name__,
             erro,
         )
@@ -136,6 +175,14 @@ def conferir_provedor():
     except triagem.TriagemError as erro:
         sys.exit(f"Bot não iniciado: {erro}")
     return nome
+
+
+def conferir_banco():
+    """Cria o banco, se preciso, antes de ligar o bot; se a pasta não permitir gravação, encerra."""
+    try:
+        return chamados.preparar_banco()
+    except triagem.TriagemError as erro:
+        sys.exit(f"Bot não iniciado: {erro}")
 
 
 def configurar_logs(token):
@@ -176,9 +223,14 @@ def main():
     token = ler_token()
     configurar_logs(token)
     nome_provedor = conferir_provedor()
+    caminho_banco = conferir_banco()
     aplicacao = criar_aplicacao(token)
 
-    logger.info("Iniciando o bot (provedor de IA: %s). Pressione Ctrl+C para encerrar.", nome_provedor)
+    logger.info(
+        "Iniciando o bot (provedor de IA: %s; banco: %s). Pressione Ctrl+C para encerrar.",
+        nome_provedor,
+        caminho_banco,
+    )
     try:
         # drop_pending_updates: mensagens enviadas com o bot desligado são descartadas.
         # allowed_updates: o Telegram envia só mensagens novas (sem edições, botões etc.).

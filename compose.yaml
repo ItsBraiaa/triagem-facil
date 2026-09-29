@@ -1,21 +1,24 @@
-# Triagem Fácil com Docker Compose. Execute um serviço por vez.
-#   Tela:  docker compose up --build web   (abrir http://localhost:8501)
-#   Bot:   docker compose up --build bot   (serviço do profile "telegram")
+# Triagem Fácil com Docker Compose.
+#   Tela:        docker compose up --build web   (abrir http://localhost:8501)
+#   Bot:         docker compose up --build bot   (serviço do profile "telegram")
+#   Tela e bot:  docker compose --profile telegram up --build
 #   Parar os dois, sem apagar ./data:  docker compose --profile telegram down
-# O histórico fica em ./data/historico.csv, no computador (bind mount).
+# O banco fica em ./data/triagem.db, no computador (bind mount). Tela e bot usam o mesmo banco.
+# ./data/historico.csv é o histórico da versão anterior, lido só pela importação.
 
 services:
   web:
     build: .
     env_file: .env
     environment:
+      - DB_PATH=/app/data/triagem.db
       - CSV_PATH=/app/data/historico.csv
       - PYTHONUNBUFFERED=1
     volumes:
       - ./data:/app/data
     command: python -m streamlit run app.py --server.address=0.0.0.0 --server.port=8501
     ports:
-      # Só este computador acessa a tela (127.0.0.1).
+      # Só este computador acessa a tela e a área de gestão (127.0.0.1).
       - "127.0.0.1:8501:8501"
 
   bot:
@@ -24,6 +27,7 @@ services:
     profiles: [telegram]
     env_file: .env
     environment:
+      - DB_PATH=/app/data/triagem.db
       - CSV_PATH=/app/data/historico.csv
       - PYTHONUNBUFFERED=1
     volumes:

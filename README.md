@@ -1,321 +1,185 @@
-# Triagem Fácil — como configurar e executar
+# Triagem Fácil
 
-O projeto classifica mensagens de clientes com Python e **Gemini ou OpenRouter**, registra os resultados em CSV e oferece uma tela web ou um bot do Telegram. Escolha **Windows, Linux ou Docker** e execute **um canal por vez**. Configure somente um provedor de IA por execução.
+> **Aviso:** projeto desenvolvido com auxílio de inteligência artificial, apenas como prova de conceito (PoC) para um trabalho da faculdade. Não é uma solução homologada nem 100% segura: não deve ser usado em produção.
 
-**Fluxo:** mensagem digitada na tela ou enviada ao bot → chamada à IA → validação da resposta → linha gravada no CSV → resultado mostrado no mesmo canal. A IA interpreta o texto; o Python cuida da validação, da data/hora e do arquivo.
+> **Como instalar e executar:** siga o guia **[COMO_EXECUTAR.md](COMO_EXECUTAR.md)**. Ele traz o passo a passo para Windows, Linux e Docker, a configuração do arquivo `.env`, o uso do sistema e os problemas comuns.
+
+## 1. O que o sistema faz
+
+O Triagem Fácil classifica mensagens de clientes de uma pequena loja com Python e IA (**Gemini ou OpenRouter**, um provedor por execução) e registra cada mensagem como um **chamado** em um banco **SQLite**. Cada chamado recebe um **protocolo**, vai para a **fila do setor responsável** (Atendimento, Financeiro, Logística ou Suporte Técnico) e é acompanhado na **área de gestão** da tela, com os status Aberto, Em atendimento e Resolvido.
+
+As mensagens chegam por dois canais, que usam a mesma lógica de registro e podem funcionar ao mesmo tempo:
+
+- **Tela web** (Streamlit), com as abas **Registrar mensagem** e **Fila de chamados**.
+- **Bot do Telegram** (long polling), em conversa privada.
+
+**Fluxo:** mensagem digitada na tela ou enviada ao bot → chamada à IA → validação da resposta → chamado gravado no banco com protocolo, status Aberto e setor sugerido → protocolo, setor e tempo da triagem informados no mesmo canal → acompanhamento na fila de chamados → aviso ao cliente no Telegram quando o status muda.
+
+A IA interpreta o texto e sugere categoria, prioridade, setor, resumo e justificativa. O Python valida a resposta, gera o protocolo, controla data/hora, grava o banco e envia os avisos. Uma mensagem que cita um protocolo (ex.: “status do pedido TF-20260929-7STU8D”) é uma **consulta**: o canal responde a situação do chamado, sem chamar a IA e sem abrir chamado novo.
+
+## 2. Funcionalidades
+
+- **Registro com protocolo e setor:** cada mensagem válida vira um chamado com protocolo no formato `TF-AAAAMMDD-XXXXXX`, status Aberto e o setor sugerido pela IA. A confirmação mostra protocolo, setor, categoria, prioridade, resumo e justificativa. O protocolo usa a data de criação e seis caracteres sorteados pelo Python, sem `0`, `O`, `1` e `I`, para evitar confusão ao ditar. O banco não aceita protocolos repetidos: se um sorteio coincidir, o Python sorteia outro.
+- **Tempo da triagem automática:** a confirmação informa quanto durou a triagem (chamada à IA, validação e gravação), com uma casa decimal. Na tela, a mensagem de sucesso termina com “Triagem automática concluída em 3,2 s.”; no bot, aparece a linha “Tempo da triagem automática: 3,2 s” logo depois da justificativa. O tempo não aparece na consulta por protocolo, nem quando o Telegram reentrega uma mensagem já registrada, e não é gravado no banco.
+- **Fila com painel “Visão geral” e atualização automática a cada 30 s:** no topo da aba **Fila de chamados**, o painel mostra a quantidade de chamados em cada status (Aberto, Em atendimento, Resolvido) e o total, e os pendentes de cada setor (“Pendentes · Logística”, por exemplo), contando os status Aberto ou Em atendimento. O painel conta todos os chamados, sem considerar os filtros da fila. O painel e a fila se atualizam sozinhos a cada 30 segundos, trazendo os chamados novos recebidos pelo bot sem ninguém clicar. Só essa parte da tela é recarregada: quem estiver digitando uma observação não perde o texto. O botão **Atualizar fila** recarrega a tela inteira na hora.
+- **Acompanhamento com histórico e observação:** nos detalhes de um chamado, a gestão altera o status e corrige o setor ou a prioridade, com uma observação opcional de até 1.000 caracteres, e clica em **Salvar alterações**. Cada gravação entra no **Histórico** com a data, o que mudou (ex.: `Status: Aberto → Em atendimento; Setor: Logística → Financeiro`) e a observação. Também é possível salvar só uma observação. A mensagem original e a análise da IA não mudam, e as observações são internas.
+- **Aviso ao cliente no Telegram quando o status muda:** se o chamado foi aberto pelo bot e o status mudou, a própria tela envia ao cliente, na mesma conversa do Telegram, uma mensagem com o protocolo e o novo status:
+
+  ```text
+  Atualização da sua solicitação TF-20260929-7STU8D:
+  Novo status: Em atendimento.
+  Informe o protocolo se precisar falar sobre ela.
+  ```
+
+  O status é salvo antes do envio. Com sucesso, a tela mostra “Chamado atualizado e registrado no histórico. Cliente avisado no Telegram.”. Se o envio falhar, ou se a tela não tiver o `TELEGRAM_BOT_TOKEN` no `.env`, aparece um alerta “Cliente não avisado no Telegram: …”, o novo status continua salvo e a gestão deve avisar o cliente por outro canal. Mudanças só de setor, prioridade ou observação não geram aviso, e a observação nunca vai para o cliente. O envio é feito pela tela, direto à API do Telegram: não depende de o `bot.py` estar em execução. Chamados registrados pela tela ou importados do CSV não têm conversa no Telegram e não geram aviso.
+- **Consulta por protocolo (tela e bot):** se a mensagem citar um ou mais protocolos, em qualquer parte do texto e em maiúsculas ou minúsculas, o canal responde o status, o setor e a data da última atualização de cada um, por exemplo `TF-20260929-7STU8D: Em atendimento, setor Logística (atualizado em 29/09/2026 13:21)`. Protocolo inexistente recebe “não encontrado”. A consulta não chama a IA, não cria chamado e não mostra o conteúdo da mensagem original.
+- **Exportação e importação CSV:** **Exportar chamados em CSV** baixa todos os chamados (colunas `protocolo;criado_em;atualizado_em;mensagem;categoria;prioridade;resumo;justificativa;setor;status`), com ponto e vírgula, UTF-8 com BOM para o Excel e neutralização de fórmulas. **Importar histórico CSV** copia para o banco o `historico.csv` da versão anterior: os registros entram como Aberto na fila de Atendimento, o arquivo não é alterado e a importação pode ser repetida sem duplicar chamados.
+- **Tema visual:** o arquivo `.streamlit/config.toml` define as cores da tela em duas versões, clara (destaque `#0E7490`, texto `#0F172A` sobre fundo branco) e escura (destaque `#0891B2`, texto `#E2E8F0` sobre `#0F172A`), que quem usa a tela escolhe no menu ⋮ > Settings; a fonte `sans-serif` que já vem com o Streamlit (não depende de internet); e `toolbarMode = "viewer"`, que esconde o botão “Deploy” e as opções de desenvolvedor, mas mantém o menu ⋮ com a troca de tema. O `Dockerfile` copia a pasta `.streamlit` para a imagem, para o tema valer também no Docker (isso ainda não foi testado dentro de um contêiner; veja a seção 7).
+- **Área de gestão só local:** a aba **Fila de chamados** não tem login e é destinada ao uso neste computador. Na execução local, o `address = "localhost"` do `config.toml` faz a tela aceitar conexões somente deste computador. No Docker, esse item do arquivo não vale (o comando usa `--server.address=0.0.0.0` dentro do contêiner), e a proteção vem da porta publicada só em `127.0.0.1`.
+
+**Setores:** a IA sugere o setor seguindo as regras do `PROMPT_SISTEMA` em `triagem.py`: Atendimento (informações gerais), Financeiro (pagamentos, cobranças, reembolsos, notas fiscais), Logística (entregas, atrasos, frete, trocas e devoluções) e Suporte Técnico (defeitos, instalação, uso de produto, problemas no site ou aplicativo). Essas regras foram definidas nesta implementação e podem ser ajustadas no prompt. Sem informação suficiente, ou com setor fora da lista, o chamado vai para **Atendimento**. Categoria e setor são campos separados.
+
+### Área de gestão em resumo
+
+- **Fila:** protocolo, resumo, setor, prioridade, status e data de criação, na ordem **Alta → Média → Baixa** e, na mesma prioridade, do mais antigo para o mais novo. Filtros por setor, prioridade e status; por padrão, aparecem os chamados Aberto e Em atendimento.
+- **Detalhes:** escolha um chamado em **Abrir detalhes de um chamado da fila** ou digite o protocolo em **Localizar chamado pelo protocolo** (vale também para chamados fora dos filtros).
+- **Acompanhamento, histórico, exportação e importação:** como descrito na lista acima.
+
+O passo a passo de uso da tela e do bot está na seção “Usando o sistema” do [COMO_EXECUTAR.md](COMO_EXECUTAR.md).
+
+## 3. Arquivos
 
 | Arquivo | Função |
 |---|---|
-| `triagem.py` | Núcleo compartilhado: prompt, chamada à IA, validação da resposta e gravação do CSV (`analisar_e_registrar`). |
-| `app.py` | Tela Streamlit: formulário, carregamento, resultado e mensagens de erro. |
-| `bot.py` | Bot do Telegram (long polling), usando a mesma função de `triagem.py`. |
+| `triagem.py` | Classificação: prompt, chamada à IA e validação da resposta (categoria, prioridade, setor, resumo e justificativa). |
+| `chamados.py` | Chamados em SQLite: registro compartilhado (`analisar_e_registrar`), protocolo, consulta por protocolo (`consultar_status`), fila, números do painel (`contar_chamados`), acompanhamento e histórico, aviso ao cliente no Telegram (`avisar_cliente_telegram`), tempo formatado (`formatar_duracao`), exportação CSV e importação do histórico CSV anterior. |
+| `app.py` | Tela Streamlit com as abas **Registrar mensagem** e **Fila de chamados** (painel, fila com atualização automática, detalhes e acompanhamento). |
+| `bot.py` | Bot do Telegram (long polling), usando a mesma função de registro de `chamados.py`. |
+| `.streamlit/config.toml` | Tema da tela (versões clara e escura, e fonte), barra de ferramentas sem o botão “Deploy” e, na execução local, acesso somente deste computador. |
+| `requirements.txt` | Dependências com versões fixadas: `streamlit`, `requests`, `python-dotenv` e `python-telegram-bot`. |
 | `.env.example` | Modelo de configuração, somente com placeholders. |
-| `Dockerfile`, `compose.yaml`, `.dockerignore` | Execução com Docker Compose. |
+| `Dockerfile`, `compose.yaml`, `.dockerignore` | Execução com Docker Compose (serviços `web` e `bot`). |
+| `COMO_EXECUTAR.md` | Guia de instalação e execução: Windows, Linux e Docker, arquivo `.env`, uso do sistema e problemas comuns. |
+| `TRIAGEM_FACIL_SPEC_IMPLEMENTACAO.md` | Especificação e plano de implementação, com a evolução e os critérios de aceite. |
 
-## 1. Preparar as credenciais
+## 4. Onde ficam os dados
 
-### Gemini — opção com camada gratuita
+| Execução | Banco de dados (chamados) | Histórico CSV anterior (só para importação) |
+|---|---|---|
+| Windows ou Linux com Python | `triagem.db` na pasta do projeto, ou o caminho de `DB_PATH` | `historico.csv` na pasta do projeto, ou o caminho de `CSV_PATH` |
+| Docker | `data/triagem.db` na pasta do projeto | `data/historico.csv` na pasta do projeto |
 
-1. Acesse o [Google AI Studio](https://aistudio.google.com/apikey) com sua conta Google.
-2. Crie uma chave da Gemini API, selecionando ou criando o projeto conforme as instruções da página.
-3. Copie a chave para `GEMINI_API_KEY` no `.env`.
-4. Consulte os [modelos](https://ai.google.dev/gemini-api/docs/models) e a [tabela de preços](https://ai.google.dev/gemini-api/docs/pricing). Escolha um modelo de texto disponível para seu projeto cuja modalidade de uso possua camada gratuita e copie seu identificador para `GEMINI_MODEL`.
-5. Configure `AI_PROVIDER=gemini`. As variáveis do OpenRouter podem ficar vazias.
+O banco é criado no primeiro acesso e guarda os chamados (protocolo, datas de criação e de última atualização, mensagem original, análise da IA, setor e status) e o histórico de alterações e observações. O tempo da triagem e o resultado dos avisos no Telegram não são gravados. O CSV deixou de ser gravado a cada análise: para uma planilha atualizada, use **Exportar chamados em CSV**. As execuções local e Docker usam bancos separados. Horários ficam em ISO 8601 com offset (no Docker, em UTC).
 
-A Gemini Developer API possui camada gratuita para determinados modelos, sujeita a disponibilidade e cotas. Confira os [limites do projeto](https://ai.google.dev/gemini-api/docs/rate-limits) antes da apresentação. Não é uso ilimitado, nem todo modelo/modalidade é gratuito; não é necessário ativar faturamento para tentar um projeto elegível na camada gratuita. Use mensagens fictícias na demonstração: a tabela de preços informa que conteúdo da camada gratuita pode ser usado para melhorar os produtos do Google.
+**Cópia de segurança:** com a tela e o bot encerrados, copie o arquivo `triagem.db` (ou a pasta `data`).
 
-### OpenRouter — alternativa ao Gemini
-
-1. Acesse [OpenRouter](https://openrouter.ai/) e entre na sua conta.
-2. Em [API Keys](https://openrouter.ai/settings/keys), crie uma chave para o projeto.
-3. Escolha um modelo no [catálogo](https://openrouter.ai/models) e copie seu identificador completo para `OPENROUTER_MODEL`.
-4. Confira as condições de uso e o saldo necessário para o modelo escolhido. Não presuma que qualquer modelo é gratuito.
-5. Configure `AI_PROVIDER=openrouter`. As variáveis do Gemini podem ficar vazias.
-
-### Telegram — necessário apenas para o bot
-
-1. No Telegram, abra o [BotFather oficial](https://t.me/BotFather).
-2. Envie `/newbot` e siga as instruções de nome e username.
-3. Copie o token recebido para `TELEGRAM_BOT_TOKEN` no arquivo local `.env`.
-4. Guarde o link ou username do bot para abrir a conversa durante o teste.
-
-O token é secreto: não o mostre em capturas de tela nem o envie a ninguém.
-
-### Arquivo `.env`
-
-Em cada opção de instalação abaixo, copie `.env.example` para `.env` **somente na primeira configuração**, evitando sobrescrever suas credenciais. Preencha o arquivo com um editor de texto:
-
-```dotenv
-AI_PROVIDER=gemini
-GEMINI_API_KEY=COLE_SUA_CHAVE_GEMINI_AQUI
-GEMINI_MODEL=COLE_O_IDENTIFICADOR_DO_MODELO_GEMINI_AQUI
-OPENROUTER_API_KEY=
-OPENROUTER_MODEL=
-TELEGRAM_BOT_TOKEN=COLE_O_TOKEN_DO_BOT_AQUI
-```
-
-Os valores `COLE_...` são placeholders e contam como "não configurado": substitua-os pelos seus. Para usar somente a tela, o token do Telegram pode ficar vazio ou com o placeholder. Mantenha `.env` local; não o inclua em apresentações ou no repositório.
-
-O `.env` é lido uma única vez, quando o programa inicia: **reinicie o programa após alterar a configuração**. Variáveis já definidas no ambiente do sistema têm precedência sobre o `.env`.
-
-Para usar OpenRouter, altere `AI_PROVIDER` para `openrouter` e preencha `OPENROUTER_API_KEY` e `OPENROUTER_MODEL`. O programa exige somente a chave e o modelo do provedor selecionado; um valor diferente de `gemini` ou `openrouter` é recusado com uma mensagem de configuração. A escolha vale igualmente para tela, Telegram, Windows, Linux e Docker. A troca é manual, sem migração automática para um provedor pago quando uma cota acabar.
-
-Opcional: `CSV_PATH=caminho/do/arquivo.csv` grava o histórico em outro local (a pasta é criada se não existir). Sem essa variável, o arquivo fica na pasta do aplicativo.
-
-## 2. Windows — PowerShell
-
-Pré-requisitos: Python 3.11 ou superior instalado pelo [site oficial](https://www.python.org/downloads/), com comando `python` disponível, e internet. Abra o PowerShell na pasta que contém `app.py`, `bot.py` e `requirements.txt`.
-
-```powershell
-python --version
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env
-notepad .env
-```
-
-Salve o `.env` preenchido. Não é necessário ativar o ambiente virtual nem alterar a política de execução do PowerShell. Se `python` não for encontrado, veja a seção 8.
-
-**Tela web:**
-
-```powershell
-.\.venv\Scripts\python.exe -m streamlit run app.py
-```
-
-Na primeira execução, o Streamlit pode pedir um e-mail no terminal: pressione `Enter` para pular. Abra [http://localhost:8501](http://localhost:8501). Se faltar configuração, a tela abre com um aviso indicando o que preencher no `.env`. Para encerrar, pressione `Ctrl+C` no terminal.
-
-**Bot do Telegram:** depois de encerrar a tela, execute:
-
-```powershell
-.\.venv\Scripts\python.exe bot.py
-```
-
-Abra seu bot no Telegram, envie `/start` e depois uma mensagem de cliente. Mantenha o terminal aberto enquanto estiver usando o bot. Encerre com `Ctrl+C`. Sem token ou sem configuração da IA, o bot não inicia e mostra no terminal o que falta.
-
-Nas próximas execuções, basta abrir a pasta do projeto e executar o comando do canal desejado. Não recrie a `.venv` ou o `.env`.
-
-## 3. Linux — terminal
-
-Pré-requisitos: Python 3.11 ou superior, `venv` e internet. Verifique:
-
-```bash
-python3 --version
-```
-
-Em Ubuntu 24.04 ou outra versão compatível de Debian/Ubuntu, os pacotes podem ser instalados com:
-
-```bash
-sudo apt update
-sudo apt install python3 python3-venv python3-pip
-```
-
-Confira a versão instalada: distribuições antigas podem fornecer Python anterior a 3.11. Nesse caso, instale uma versão compatível ou utilize a opção Docker. Outras distribuições usam seus próprios gerenciadores de pacotes.
-
-Dentro da pasta que contém `app.py`, `bot.py` e `requirements.txt`:
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-cp .env.example .env
-```
-
-Abra `.env` no editor de sua preferência, preencha os valores da seção 1 e salve.
-
-**Tela web:**
-
-```bash
-.venv/bin/python -m streamlit run app.py
-```
-
-Se o Streamlit pedir um e-mail no terminal, pressione `Enter` para pular. Abra [http://localhost:8501](http://localhost:8501). Encerre com `Ctrl+C` antes de iniciar o bot.
-
-**Bot do Telegram:**
-
-```bash
-.venv/bin/python bot.py
-```
-
-Abra seu bot, envie `/start` e uma mensagem de cliente. Encerre com `Ctrl+C`. Nas próximas execuções, use apenas o comando do canal escolhido.
-
-## 4. Docker — Windows ou Linux
-
-Nesta opção, não é necessário instalar Python no computador. É necessário ter Docker e Compose funcionando, além de internet. No Windows, use [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) em modo de contêineres Linux; no Linux, siga a instalação do [Docker Engine](https://docs.docker.com/engine/install/) e do [plugin Compose](https://docs.docker.com/compose/install/linux/). A imagem usa `python:3.11-slim` e as versões fixadas em `requirements.txt`; o `.env` não entra na imagem, as credenciais são lidas só na execução.
-
-Abra o terminal na pasta com `compose.yaml` e `Dockerfile`. Verifique:
-
-```text
-docker version
-docker compose version
-```
-
-Crie o `.env` conforme a seção 1 (o Compose exige que ele exista). No PowerShell, use `Copy-Item .env.example .env`; no Linux, use `cp .env.example .env`. Se já estiver configurado, preserve o arquivo.
-
-Crie a pasta que armazenará os dados:
-
-```powershell
-# Windows / PowerShell
-New-Item -ItemType Directory -Force data
-```
-
-```bash
-# Linux
-mkdir -p data
-```
-
-Os próximos comandos são iguais nos dois sistemas.
-
-**Conferir a configuração sem mostrar as credenciais:**
-
-```text
-docker compose config --quiet
-```
-
-**Construir e iniciar a tela web:**
-
-```text
-docker compose up --build web
-```
-
-Abra [http://localhost:8501](http://localhost:8501). A porta é publicada só em `127.0.0.1`, isto é, apenas este computador acessa a tela. A primeira construção baixa a imagem e as dependências, podendo demorar mais.
-
-**Trocar da tela para o bot:** pressione `Ctrl+C`, encerre os serviços e inicie somente o bot:
-
-```text
-docker compose --profile telegram down
-docker compose up --build bot
-```
-
-Abra seu bot no Telegram e envie `/start`. O bot não precisa de porta publicada, webhook ou URL pública. O serviço `bot` pertence ao profile `telegram` e só sobe quando chamado pelo nome. Os serviços não dependem um do outro: para trocar novamente de canal, pare o anterior antes de iniciar o próximo.
-
-**Executar em segundo plano, depois de confirmar que está funcionando:**
-
-```text
-docker compose up -d bot
-docker compose logs -f bot
-```
-
-`Ctrl+C` encerra o acompanhamento dos logs, mas o bot em segundo plano continua ativo. Para encerrar de fato:
-
-```text
-docker compose --profile telegram down
-```
-
-Esse comando encerra a tela e o bot sem apagar a pasta `data`. Para a tela em segundo plano, substitua `bot` por `web` nos comandos de início e logs, com o canal anterior parado. O Docker e o computador precisam continuar ligados.
-
-## 5. Onde fica o histórico
-
-| Execução | Local no computador |
-|---|---|
-| Windows ou Linux com Python | `historico.csv` na pasta do aplicativo (ao lado de `triagem.py`), ou o caminho de `CSV_PATH` |
-| Docker | `data/historico.csv` na pasta do projeto (`CSV_PATH=/app/data/historico.csv`, definido no `compose.yaml`) |
-
-O arquivo é criado após a primeira análise válida, com as colunas `data_hora;mensagem;categoria;prioridade;resumo;justificativa`. Ele usa ponto e vírgula e UTF-8 com BOM, para o Excel abrir com acentos. Abra-o no Excel, LibreOffice ou editor de texto. Textos que começam com `=`, `+`, `-` ou `@` recebem um apóstrofo no início para a planilha não tratá-los como fórmula. Respostas inválidas da IA não são gravadas. Se a planilha bloquear a gravação, a tela ou o bot mostra "Falha no registro": feche o arquivo e envie novamente.
-
-No Docker, `./data` fica vinculada à pasta `/app/data` do contêiner. Parar ou recriar o contêiner preserva o histórico no computador. As execuções local e Docker usam arquivos separados por padrão. Horários são registrados em ISO 8601 com offset; no Docker, o contêiner registra em UTC (`+00:00`), e na execução local usa o fuso do computador (ex.: `-03:00`).
-
-## 6. Demonstração
+## 5. Demonstração
 
 ### Exemplos
 
-Use estas mensagens fictícias. Os resultados são **expectativas** para orientar o ensaio, não valores fixos no programa: a IA decide e pode variar.
+Use estas mensagens fictícias. Os resultados são **expectativas** para orientar o ensaio, não valores fixos no programa: a IA decide e pode variar. Se o setor sugerido não for o esperado, corrija-o na área de gestão durante a demonstração.
 
-| Mensagem | Categoria esperada | Prioridade esperada |
-|---|---|---|
-| “Vocês aceitam pagamento por cartão?” | Dúvida | Baixa |
-| “Meu produto chegou quebrado e quero fazer a troca.” | Reclamação | Média |
-| “Meu pedido está atrasado e preciso receber ainda hoje para um evento.” | Reclamação | Alta |
+| Mensagem | Categoria esperada | Prioridade esperada | Setor esperado |
+|---|---|---|---|
+| “Vocês aceitam pagamento por cartão?” | Dúvida | Baixa | Financeiro |
+| “Meu produto chegou quebrado e quero fazer a troca.” | Reclamação | Média | Logística |
+| “Meu pedido está atrasado e preciso receber ainda hoje para um evento.” | Reclamação | Alta | Logística |
 
 ### Teste antes da apresentação
 
-1. Inicie apenas o canal escolhido.
-2. Se usar Telegram, envie `/start` primeiro.
-3. Envie as três mensagens acima, uma por vez. Confira categoria, prioridade, resumo e justificativa.
-4. Abra o CSV e confira que os três envios geraram três novos registros.
-5. Encerre o programa e confirme que o arquivo permanece salvo.
+Siga o “Teste rápido antes da apresentação” do [COMO_EXECUTAR.md](COMO_EXECUTAR.md#teste). Ele usa as três mensagens acima e confere o registro, o painel, a atualização automática, o acompanhamento com o aviso no Telegram, a consulta por protocolo, a persistência e a importação.
 
-O bot é um classificador: cada mensagem é independente. Mensagens enviadas enquanto o bot estava desligado são descartadas na inicialização; envie uma mensagem nova após iniciar o processo.
+A tela não mostra por onde o chamado chegou. Para mostrar o aviso no Telegram, localize o chamado pelo protocolo que o bot respondeu.
+
+O bot é um classificador: cada mensagem é independente. Mensagens enviadas enquanto o bot estava desligado são descartadas na inicialização; envie uma mensagem nova após iniciar o processo. Se o Telegram entregar a mesma mensagem de novo, o bot responde com o protocolo já registrado, sem nova análise.
 
 ### Roteiro de 10 a 15 minutos
 
 | Tempo | O que fazer |
 |---|---|
-| 0–2 min | **Problema:** a loja lê, classifica e anota cada mensagem manualmente. Mostre como seria a triagem manual de uma mensagem. |
-| 2–4 min | **Solução:** entrada (tela ou Telegram) → processamento (`triagem.py` chama a IA e valida o JSON) → saída (resultado no canal e linha no CSV). Explique que a IA interpreta o texto e o Python controla validação, data/hora e gravação. |
-| 4–10 min | **Ao vivo:** envie as três mensagens pelo Telegram (celular ou Telegram Desktop) ou pela tela. Mostre categoria, prioridade, resumo e justificativa e comente se bateram com a expectativa. |
-| 10–12 min | **Saída:** abra o CSV e mostre as linhas criadas automaticamente, com data/hora. |
-| 12–15 min | **Benefícios e limitações** (seção 7) e perguntas. |
+| 0–2 min | **Problema:** a loja lê, classifica, anota e encaminha cada mensagem manualmente. Mostre como seria a triagem manual de uma mensagem e, se possível, cronometre. |
+| 2–4 min | **Solução:** entrada (tela ou Telegram) → processamento (`triagem.py` chama a IA e valida o JSON) → saída (chamado no banco, protocolo e setor no canal, fila por setor, aviso ao cliente). Explique que a IA interpreta o texto e o Python controla validação, protocolo, data/hora, gravação e avisos. |
+| 4–9 min | **Ao vivo:** envie as três mensagens pelo Telegram (celular ou Telegram Desktop) ou pela tela. Mostre o protocolo, o setor, a análise e o tempo da triagem automática, e comente se bateram com a expectativa. |
+| 9–12 min | **Gestão:** mostre o painel **Visão geral** e a fila ordenada por prioridade, que recebe sozinha o chamado enviado pelo bot. Filtre por setor, localize pelo protocolo um chamado que o bot registrou, mude o status com uma observação e mostre o aviso chegando no celular. Consulte o protocolo pelo bot e exporte o CSV. |
+| 12–15 min | **Benefícios e limitações** (seção 6) e perguntas. |
 
-Plano B: se o Telegram falhar, use a tela Streamlit; os dois canais dependem da API de IA. Se quiser apresentar economia de tempo, cronometre a triagem manual e a automática e use essas medidas reais, ou identifique claramente o valor como estimativa.
+**Plano B:** se o Telegram falhar (na rede usada nos testes, a conexão com o Telegram falhou de forma intermitente), use a aba de registro da tela; se o aviso não for entregue, a tela mostra um alerta e o status continua salvo. Os dois canais dependem da API de IA. Para falar de economia de tempo, compare a triagem manual cronometrada com o tempo que o próprio sistema mostra na confirmação; se usar valores que não foram medidos, identifique-os como estimativa.
 
 | Critério da rubrica | Evidência na apresentação |
 |---|---|
-| Interação da IA com o ambiente / entrada | Mensagem digitada ao vivo na tela ou enviada ao bot. |
-| Processamento e uso adequado da IA | Interpretação de texto livre: categoria, prioridade, resumo e justificativa. |
-| Resultado final da automação / saída | Resultado no canal e linha criada automaticamente no CSV. |
-| Problema e benefícios | Tarefa manual comparada ao trabalho automatizado. |
-| Demonstração prática ao vivo | Fluxo executado com conexão real à API. |
+| Interação da IA com o ambiente / entrada | Mensagem digitada ao vivo na tela ou enviada ao bot pelo celular. |
+| Processamento e uso adequado da IA | Interpretação de texto livre: categoria, prioridade, setor, resumo e justificativa, validados pelo Python. |
+| Resultado final da automação / saída | Protocolo, setor e tempo da triagem no canal; chamado na fila do setor e no painel, que se atualizam sozinhos; aviso ao cliente no Telegram quando o status muda; CSV exportado. |
+| Problema e benefícios | Tarefa manual comparada ao trabalho automatizado, com o tempo da triagem automática exibido pelo sistema. |
+| Demonstração prática ao vivo | Fluxo executado com conexão real à API de IA e ao Telegram. |
 
-## 7. Limitações
+## 6. Limitações
 
-- Exige internet e a API do provedor disponível, com cota ou saldo; não há retentativa nem troca automática de provedor.
-- As classificações são produzidas pela IA e podem variar entre envios. A prioridade é uma **sugestão** de triagem, não uma decisão de atendimento.
-- Um canal por vez: tela e bot gravam no mesmo CSV, sem controle de gravação simultânea.
+- Exige internet e a API do provedor de IA disponível, com cota ou saldo; não há retentativa nem troca automática de provedor. Um modelo pode deixar de estar disponível: nos testes, o `gemini-2.5-flash-lite` respondeu HTTP 404 para chaves novas.
+- As classificações e o setor são produzidos pela IA e podem variar entre envios. A prioridade e o setor são **sugestões** de triagem, corrigíveis na área de gestão.
+- A área de gestão não tem login: é destinada ao uso local, neste computador. Login, WhatsApp, envio de e-mail e hospedagem ficam fora desta versão.
+- **Atualização automática:** acontece na página aberta no navegador e recarrega só o painel e a fila, a cada 30 segundos; um chamado novo pode levar até esse tempo para aparecer. Os detalhes do chamado aberto e o arquivo da exportação não entram nesse ciclo: clique em **Atualizar fila** para recarregar a tela inteira antes de exportar.
+- **Aviso no Telegram:**
+  - Só para chamados criados pelo bot e só quando o status muda.
+  - A tela precisa do `TELEGRAM_BOT_TOKEN` no `.env`, lido quando o programa inicia: depois de preencher, reinicie a tela.
+  - Não há retentativa. Se o envio falhar, a tela mostra um alerta, o status continua salvo e a gestão avisa o cliente por outro canal. O resultado do envio não fica registrado no histórico.
+  - O envio usa um tempo limite de 10 segundos; enquanto isso, a tela mostra “Avisando o cliente no Telegram...”.
+  - O cliente recebe só o protocolo e o novo status; as observações são internas.
+- A consulta por protocolo não identifica quem pergunta: quem souber o protocolo vê status, setor e data (nunca o conteúdo da mensagem). Mensagens que citam um protocolo são sempre tratadas como consulta, não como chamado novo.
+- O tempo da triagem mede uma execução neste computador (IA, validação e gravação) e varia com a rede e o modelo; não é gravado no banco.
 - O bot só funciona enquanto o processo (`bot.py` ou o contêiner) estiver em execução. Mensagens enviadas com o bot desligado são descartadas ao iniciar. Use uma única instância por token.
 - Apenas texto, até 3.000 caracteres por mensagem; o bot atende só conversas privadas e ignora grupos e mensagens editadas.
-- No Docker, o horário do CSV fica em UTC (`+00:00`).
-- Sem login, banco de dados ou histórico de conversa: cada mensagem é analisada isoladamente.
+- SQLite grava um chamado por vez: tela e bot podem funcionar juntos, e uma gravação espera a outra por até 15 segundos. Mantenha o banco em disco local (não em pasta de rede).
+- No Docker, o horário fica em UTC (`+00:00`).
 
-## 8. Problemas comuns
+## 7. Verificação realizada
 
-| Sintoma | O que verificar |
-|---|---|
-| `python` não encontrado no Windows | Instale o Python 3.11+ pelo [python.org](https://www.python.org/downloads/) marcando **"Add python.exe to PATH"** no instalador; feche e reabra o terminal. Se houver launcher `py`, use `py -3` nos comandos iniciais. |
-| Streamlit pede e-mail no terminal | Pressione `Enter` para pular; o pedido aparece só na primeira execução local. |
-| Erro ao criar `.venv` no Linux | Versão do Python e instalação do pacote `python3-venv`. |
-| Módulo não encontrado | Instale `requirements.txt` usando o mesmo Python da `.venv` usado para executar. |
-| Aviso "Configuração incompleta" | `.env` na pasta do aplicativo, nomes corretos e placeholders `COLE_...` substituídos; reinicie o programa. |
-| "AI_PROVIDER inválido" | Use apenas `gemini` ou `openrouter`. |
-| Chave "tem caracteres inválidos" | Copie a chave de novo, direto do site do provedor, para o `.env`: aspas curvas ou acentos vindos do Word/WhatsApp não são aceitos. Reinicie o programa. |
-| Mensagem com HTTP 401 ou 403 | Chave recusada ou sem permissão: confira a chave do provedor selecionado. |
-| Mensagem com HTTP 400 ou 404 | Identificador do modelo e chave (o Gemini também responde 400 para chave inválida). |
-| Mensagem com HTTP 402 | Saldo ou créditos insuficientes (OpenRouter): confira a conta e o custo do modelo. |
-| Mensagem com HTTP 429 / cota esgotada | Confira os limites do provedor e aguarde a liberação; se quiser trocar de provedor, altere o `.env` e reinicie. |
-| Mensagem com HTTP 5xx, tempo esgotado ou falha de conexão | Serviço indisponível ou internet instável; tente novamente em alguns minutos. |
-| "Resposta inesperada", "incompleta", "longo demais" ou fora do formato | Envie novamente; se repetir, escolha outro modelo. Nada é gravado nesses casos. |
-| Bot responde "Ocorreu um erro inesperado" | Veja a linha "Erro inesperado na análise" no terminal do bot e envie a mensagem de novo. |
-| "Falha no registro" / CSV não grava | Feche o arquivo no Excel e confira permissões da pasta. No Linux, arquivos criados pelo Docker em `data/` pertencem ao root. |
-| Bot não responde | Token correto, processo ativo, conversa privada com o bot certo e mensagem nova após iniciar. |
-| "o Telegram recusou o TELEGRAM_BOT_TOKEN" | Copie novamente o token do @BotFather para o `.env`. |
-| Conflito de recepção no Telegram (`Conflict`) | Encerre outra instância local ou Docker usando o mesmo token. |
-| Docker não conecta ao daemon | Abra o Docker Desktop ou inicie o serviço Docker conforme a instalação. |
-| Acesso negado ao Docker no Linux | Confira as permissões exigidas pela instalação oficial; não altere permissões do socket indiscriminadamente. |
-| Porta 8501 ocupada | Encerre a outra instância local/Docker antes de iniciar a tela. |
-| Nova chave não foi aplicada | Reinicie o processo local; no Docker, execute `down` e depois `up` do serviço. |
+### Nesta rodada: tema, tempo da triagem, aviso no Telegram, painel e atualização automática
 
-## 9. Verificação realizada
+**Com respostas simuladas** (Linux, Python 3.14.4 e 3.11.16, com as versões do `requirements.txt`: streamlit 1.64.0, requests 2.34.2, python-dotenv 1.2.3 e python-telegram-bot 22.8). Nenhuma chamada real à IA ou ao Telegram; credenciais falsas. Os scripts de verificação ficam numa pasta temporária, fora do projeto.
 
-**Verificado com respostas simuladas** (Windows 11 Pro, Python 3.12.14 em venv, streamlit 1.64.0, requests 2.34.2, python-dotenv 1.2.3, python-telegram-bot 22.8; sem nenhuma chamada real à IA ou ao Telegram). Um script de verificação temporário, fora do projeto, executou 138 checagens sem falhas; depois da revisão do código, ele foi executado de novo (138 sem falhas) junto com 16 checagens das correções, também sem falhas:
+| Verificação | Checagens | O que confere |
+|---|---|---|
+| Regressão do núcleo e do bot | 144 | Validação, setor, registro, protocolo único, fila, acompanhamento, histórico, consulta por protocolo, importação e exportação CSV, reentrega do Telegram e respostas do bot. |
+| Regressão da tela (Streamlit AppTest) | 52 | Abas, registro, resultado, fila, filtros, detalhes, acompanhamento, localização por protocolo, importação e exportação. |
+| Painel e fila | 70 | Contagem por status e total, pendentes por setor (Aberto e Em atendimento), zeros com banco vazio, painel que não muda com os filtros, um único trecho da tela com atualização automática contendo só painel e fila, detalhes/localizar/exportação fora dele, seletor que abre os detalhes, **Atualizar fila** e erro compreensível com banco inacessível. |
+| Tempo da triagem | 58 | Formato com vírgula, tempo no fim da confirmação da tela e logo depois da justificativa no bot; sem tempo em falha, consulta, mensagem vazia e reentrega do Telegram; atualização da tela sem nova chamada à IA; confirmação do bot abaixo de 4.096 caracteres. |
+| Tema | 58 | Valores de `[theme]`, `[theme.light]`, `[theme.dark]` e `[client]` (`toolbarMode = "viewer"`) lidos pelo Streamlit instalado; sem `base` fixa, para permitir a troca entre claro e escuro; fonte sem download; `--server.address=0.0.0.0` vence o `address` do arquivo e o tema continua valendo; `Dockerfile` copia `.streamlit` e o `.dockerignore` não a exclui; nenhuma requisição feita. |
+| Aviso no Telegram | 91 | Aviso só para chamado do bot e só com mudança de status; texto só com protocolo e novo status, sem a observação e sem `parse_mode`; tempo limite de 10 s; sem token ou com falha de envio, alerta com o status salvo; clique na tela durante o envio; token e URL do Telegram fora dos logs; nenhum envio com o banco aberto. |
 
-- Mensagem vazia ou acima de 3.000 caracteres: recusada sem chamar a API e sem criar arquivo.
-- JSON válido aceito, inclusive dentro de um único bloco de código; categoria/prioridade fora das opções, campo ausente, valor não texto, texto vazio e resposta não JSON: recusados sem gravação.
-- Tempo esgotado, falha de conexão, HTTP 400/401/402/403/429/500/503 e corpo inesperado: erro claro, exatamente uma chamada ao provedor selecionado (sem fallback), nada gravado e nenhuma chave na mensagem.
-- Gemini e OpenRouter: endpoint, `Authorization: Bearer`, modelo e timeout de 30 s corretos; a falta da chave do provedor não selecionado não impede o uso; `AI_PROVIDER` inválido, chave/modelo ausente ou placeholder geram instrução de configuração.
-- CSV: dois envios geram um cabeçalho e duas linhas, BOM só no início, acentos, aspas, `;` e quebras de linha preservados, neutralização de `=`, `+`, `-` e `@`, data/hora ISO 8601 com offset e criação da pasta de `CSV_PATH`. Falha de gravação mostra "Falha no registro" e nenhuma confirmação.
-- Tela (Streamlit AppTest): atualizar a tela não repete chamada nem registro; um novo clique com o mesmo texto conta como nova análise; uma falha não mostra o resultado anterior; valores da IA aparecem como texto literal. A tela iniciou com `streamlit run` e respondeu `ok` em `/_stcore/health`.
-- Bot: `/start` sem IA nem CSV; texto válido gera uma análise, uma linha e a resposta; conteúdo não textual, mensagem longa, comando desconhecido e erro de API têm resposta compreensível; se o envio da resposta falhar após gravar, nada é reprocessado; grupos e edições são ignorados; sem token, o bot sai com mensagem clara; `run_polling` com Telegram simulado descarta pendentes (`drop_pending_updates`) e o token não aparece no terminal.
-- Tela e bot usam as mesmas funções de `triagem.py`; varredura sem chaves ou tokens nos arquivos do projeto.
-- Correções da revisão: categoria e prioridade em maiúsculas/minúsculas diferentes (ex.: "reclamação", "ALTA") viram o valor oficial, e valores fora das opções continuam recusados; chave com aspas curvas gera instrução de configuração na tela e no bot, sem traceback e sem chamar a API; resumo ou justificativa acima de 500 caracteres é recusado sem gravação, mantendo a resposta do bot abaixo do limite de 4096 caracteres do Telegram; no bot, um erro inesperado recebe resposta na conversa em vez de silêncio.
+**Total: 473 checagens por versão do Python, todas passando no branch integrado.**
 
-**Não testado neste ambiente:** Linux (comandos da seção 3) e Docker (`docker compose config`, construção da imagem, tela no contêiner e persistência do bind mount), pois o Docker não estava instalado. Os arquivos Docker foram apenas revisados. A execução em Python 3.11 não foi feita: foram conferidas a sintaxe do código e a versão mínima exigida pelas dependências fixadas (3.10).
+**No navegador** (servidor de teste local, com respostas simuladas): a fila e o painel se atualizaram sozinhos com um chamado gravado por outro processo, em ciclos de 30 segundos; o texto não salvo da observação foi preservado durante a atualização; o seletor abriu os detalhes do chamado; o tema foi aplicado e o botão “Deploy” ficou escondido. Também foi provado localmente que o `--server.address=0.0.0.0` da linha de comando tem precedência sobre o `address = "localhost"` do `config.toml`.
 
-**Pendente de credenciais:** chamada real ao Gemini, chamada real ao OpenRouter e bot real no Telegram. Para concluir, preencha o `.env`, envie as três mensagens de exemplo por cada canal disponível e confira as linhas no CSV.
+### Integração real (29/09/2026)
 
-## 10. Referências
+- **Gemini:** o modelo `gemini-3.1-flash-lite` classificou corretamente os três exemplos, com 2 a 12 segundos por mensagem. O modelo `gemini-2.5-flash-lite` respondeu HTTP 404 (“no longer available to new users”) para chaves novas.
+- **Telegram:** o bot real conectou ao Telegram (“Application started”). Na rede usada, a conexão com `api.telegram.org` falhou de forma intermitente (3 de 6 tentativas pelo próprio computador).
+
+### Docker
+
+Verificado na rodada anterior (evolução do banco), com Docker Desktop 29.6.1 no Linux: `docker compose config`, construção da imagem, serviço `web` publicado só em `127.0.0.1:8501`, serviço `bot` sozinho e sem portas, profile `telegram` com os dois serviços e banco preservado em `./data` depois de encerrar os contêineres. **Nesta rodada**, nada foi testado dentro de um contêiner, inclusive as mudanças em `app.py`, `bot.py` e `chamados.py`. A cópia da pasta `.streamlit` no `Dockerfile` foi revisada e conferida pelo script do tema, e a precedência do `--server.address` foi provada fora do Docker.
+
+### Não verificado nesta rodada
+
+- Aviso no Telegram entregue a um cliente real.
+- Tempo da triagem exibido numa triagem real, pela tela e pelo bot (a integração real registrou de 2 a 12 s por mensagem, mas a exibição do tempo com a IA real não foi conferida).
+- Tela integrada no Windows.
+- Tema e aviso no Telegram dentro do contêiner Docker.
+- Integração real com o OpenRouter.
+
+### Rodadas anteriores
+
+- **Evolução do banco** (protocolo, setores, fila, acompanhamento, histórico e consulta por protocolo): as mesmas 144 checagens do núcleo e do bot e 52 da tela, incluindo três processos gravando no mesmo banco ao mesmo tempo (180 chamados sem erro), importação repetida sem duplicar, servidor real escutando só em `127.0.0.1` e os serviços Docker descritos acima.
+- **Versão anterior (CSV):** 138 checagens simuladas mais 16 checagens de correções em Windows 11 Pro com Python 3.12.14.
+
+## 8. Referências
 
 - [OpenRouter: integração](https://openrouter.ai/docs/quickstart).
-- [Gemini: chaves da API](https://ai.google.dev/gemini-api/docs/api-key), [preços](https://ai.google.dev/gemini-api/docs/pricing) e [compatibilidade de chat](https://ai.google.dev/gemini-api/docs/openai).
-- [Telegram: criação do bot](https://core.telegram.org/bots/tutorial).
+- [Gemini: chaves da API](https://ai.google.dev/gemini-api/docs/api-key), [modelos](https://ai.google.dev/gemini-api/docs/models), [preços](https://ai.google.dev/gemini-api/docs/pricing) e [compatibilidade de chat](https://ai.google.dev/gemini-api/docs/openai).
+- [Telegram: criação do bot](https://core.telegram.org/bots/tutorial) e [Bot API (`sendMessage`)](https://core.telegram.org/bots/api#sendmessage).
 - [python-telegram-bot](https://docs.python-telegram-bot.org/).
-- [Python: ambientes virtuais](https://docs.python.org/3/library/venv.html).
+- [Python: sqlite3](https://docs.python.org/3/library/sqlite3.html).
+- [Streamlit: `st.fragment` e `run_every`](https://docs.streamlit.io/develop/api-reference/execution-flow/st.fragment) e [configuração `config.toml` (tema e `toolbarMode`)](https://docs.streamlit.io/develop/api-reference/configuration/config.toml).
 - [Streamlit em Docker](https://docs.streamlit.io/deploy/tutorials/docker).
 - [Docker Compose: serviços e perfis](https://docs.docker.com/compose/how-tos/profiles/).

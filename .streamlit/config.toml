@@ -1,0 +1,31 @@
+# Configuração da tela ao executar localmente (python -m streamlit run app.py).
+# address = "localhost": a tela e a área de gestão aceitam conexões somente deste computador.
+# No Docker, o compose.yaml usa --server.address=0.0.0.0 dentro do contêiner e publica a
+# porta apenas em 127.0.0.1, com o mesmo efeito.
+[server]
+address = "localhost"
+
+# Tema da tela, com versão clara e escura. Vale também no Docker: o Dockerfile copia esta pasta.
+# Quem usa a tela escolhe Claro, Escuro ou "igual ao sistema" no menu ⋮ > Settings.
+# "sans-serif" é a fonte que já vem com o Streamlit: não depende de internet.
+[theme]
+font = "sans-serif"
+
+# Claro: texto quase preto sobre fundo branco, contraste alto.
+[theme.light]
+primaryColor = "#0E7490"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F1F5F9"
+textColor = "#0F172A"
+
+# Escuro: texto claro sobre azul-escuro; o destaque é um ciano mais claro para continuar legível.
+[theme.dark]
+primaryColor = "#0891B2"
+backgroundColor = "#0F172A"
+secondaryBackgroundColor = "#1E293B"
+textColor = "#E2E8F0"
+
+# "viewer" esconde o botão "Deploy" e as opções de desenvolvedor,
+# mas mantém o menu ⋮ com a troca de tema.
+[client]
+toolbarMode = "viewer"

@@ -7,4 +7,6 @@
 __pycache__
 *.pyc
 *.csv
+*.db
+*.db-journal
 data/

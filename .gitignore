@@ -2,4 +2,6 @@
 .venv/
 __pycache__/
 historico.csv
+*.db
+*.db-journal
 data/
