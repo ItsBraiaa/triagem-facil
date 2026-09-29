@@ -23,6 +23,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+import requests
+
 import triagem
 
 logger = logging.getLogger(__name__)
@@ -352,6 +354,54 @@ def listar_historico(protocolo):
     with abrir_banco() as conexao:
         linhas = conexao.execute("SELECT * FROM historico WHERE protocolo = ? ORDER BY id DESC", (protocolo,))
         return [dict(linha) for linha in linhas]
+
+
+# ---------- Aviso ao cliente pelo Telegram ----------
+
+# Tempo curto: a tela de gestão espera o envio, e o status já está salvo antes do aviso.
+TIMEOUT_TELEGRAM_SEGUNDOS = 10
+
+
+def avisar_cliente_telegram(chamado):
+    """Avisa no Telegram que o status mudou, se o chamado foi aberto pelo bot.
+
+    Devolve "enviado", "falhou", "sem_token" (TELEGRAM_BOT_TOKEN não configurado) ou
+    "sem_telegram" (chamado da tela ou importado do CSV: não há conversa para avisar).
+    A mensagem leva só o protocolo e o status: as observações da gestão são internas.
+    """
+    origem = chamado["origem"] or ""
+    if not origem.startswith("telegram:"):
+        return "sem_telegram"
+    token = triagem.ler_variavel("TELEGRAM_BOT_TOKEN")
+    if token is None:
+        return "sem_token"
+    protocolo = chamado["protocolo"]
+    chat_id = origem.split(":")[1]  # o bot grava a origem como "telegram:<chat_id>:<message_id>"
+    texto = (
+        f"Atualização da sua solicitação {protocolo}:\n"
+        f"Novo status: {chamado['status']}.\n"
+        "Informe o protocolo se precisar falar sobre ela."
+    )
+    # A URL contém o token do bot, e o texto das exceções do requests repete a URL. Por isso o log
+    # mostra só o protocolo e o tipo do erro (ou o status HTTP), nunca o texto da exceção.
+    try:
+        resposta = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": texto},  # sem parse_mode: vai como texto simples
+            timeout=TIMEOUT_TELEGRAM_SEGUNDOS,
+        )
+    except requests.RequestException as erro:
+        logger.warning("Chamado %s: aviso não enviado ao Telegram (%s).", protocolo, type(erro).__name__)
+        return "falhou"
+    try:
+        # O Telegram confirma o envio com {"ok": true}; qualquer outra resposta conta como falha.
+        confirmado = resposta.status_code == 200 and resposta.json()["ok"] is True
+    except (ValueError, KeyError, TypeError):
+        confirmado = False
+    if not confirmado:
+        logger.warning("Chamado %s: o Telegram não confirmou o aviso (HTTP %s).", protocolo, resposta.status_code)
+        return "falhou"
+    return "enviado"
 
 
 # ---------- CSV: exportação e importação do histórico anterior ----------

@@ -212,6 +212,10 @@ def mostrar_detalhes():
     aviso = st.session_state.pop("aviso_detalhes", None)
     if aviso:
         st.success(aviso)
+    # O status foi salvo, mas o cliente do Telegram ficou sem aviso: a gestão precisa avisá-lo.
+    alerta = st.session_state.pop("alerta_detalhes", None)
+    if alerta:
+        st.warning(alerta)
     st.subheader(f"Chamado {chamado['protocolo']}")
     st.caption(
         f"Criado em {chamados.formatar_data(chamado['criado_em'])} · "
@@ -252,22 +256,52 @@ def mostrar_detalhes():
         )
         salvar = st.form_submit_button("Salvar alterações")
     if salvar:
-        salvar_acompanhamento(protocolo, status, setor, prioridade, observacao)
+        salvar_acompanhamento(protocolo, chamado["status"], status, setor, prioridade, observacao)
     mostrar_historico(protocolo)
 
 
-def salvar_acompanhamento(protocolo, status, setor, prioridade, observacao):
-    """Grava as alterações e a observação; em caso de sucesso, recarrega a tela."""
+def salvar_acompanhamento(protocolo, status_anterior, status, setor, prioridade, observacao):
+    """Grava as alterações e a observação; em caso de sucesso, recarrega a tela.
+
+    Se o status mudou, avisa o cliente que abriu o chamado pelo Telegram. Setor, prioridade e
+    observação são assuntos internos da gestão e não geram aviso.
+    """
     try:
-        _, alterado = chamados.atualizar_chamado(protocolo, status, setor, prioridade, observacao)
+        chamado, alterado = chamados.atualizar_chamado(protocolo, status, setor, prioridade, observacao)
     except triagem.TriagemError as erro:
         st.error(str(erro))
         return
-    st.session_state["aviso_detalhes"] = (
-        "Chamado atualizado e registrado no histórico." if alterado else "Nenhuma alteração para salvar."
-    )
+    aviso = "Chamado atualizado e registrado no histórico." if alterado else "Nenhuma alteração para salvar."
+    st.session_state["aviso_detalhes"] = aviso
     if alterado:
         st.session_state["gravacoes"] = st.session_state.get("gravacoes", 0) + 1
+    if alterado and status != status_anterior:
+        # Um clique na tela durante o envio interrompe este código, mas o que já está na sessão
+        # aparece na próxima execução. Por isso este alerta é gravado antes e trocado pelo resultado.
+        st.session_state["alerta_detalhes"] = (
+            "Não foi possível confirmar o aviso ao cliente no Telegram: a tela foi usada durante o envio "
+            "(falhas ficam registradas no terminal). O novo status continua salvo; na dúvida, avise o "
+            "cliente por outro canal."
+        )
+        # O aviso vem depois da gravação: se o Telegram falhar, o novo status continua salvo.
+        with st.spinner("Avisando o cliente no Telegram..."):
+            resultado = chamados.avisar_cliente_telegram(chamado)
+        alerta = None  # "enviado" e "sem_telegram" (chamado da tela ou do CSV) não geram alerta.
+        if resultado == "enviado":
+            st.session_state["aviso_detalhes"] = aviso + " Cliente avisado no Telegram."
+        elif resultado == "sem_token":
+            alerta = (
+                "Cliente não avisado no Telegram: o TELEGRAM_BOT_TOKEN não está configurado no arquivo .env "
+                "(depois de preencher, reinicie o programa). O novo status continua salvo; avise o cliente "
+                "por outro canal."
+            )
+        elif resultado == "falhou":
+            alerta = (
+                "Cliente não avisado no Telegram: a mensagem não foi entregue (falha de conexão ou recusa "
+                "do Telegram; o motivo ficou registrado no terminal). O novo status continua salvo; "
+                "avise o cliente por outro canal."
+            )
+        st.session_state["alerta_detalhes"] = alerta
     st.rerun()  # Recarrega a fila e os detalhes com os valores gravados.
 
 
