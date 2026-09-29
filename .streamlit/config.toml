@@ -4,3 +4,19 @@
 # porta apenas em 127.0.0.1, com o mesmo efeito.
 [server]
 address = "localhost"
+
+# Tema da tela (cores e fonte). Vale também no Docker: o Dockerfile copia esta pasta para a imagem.
+# base = "light": o que não é definido aqui, como as cores dos avisos, segue o tema claro.
+# Texto quase preto sobre fundo branco dá contraste alto e facilita a leitura.
+# "sans-serif" é a fonte que já vem com o Streamlit: não depende de internet.
+[theme]
+base = "light"
+primaryColor = "#0E7490"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F1F5F9"
+textColor = "#0F172A"
+font = "sans-serif"
+
+# "minimal" esconde o botão "Deploy" e o menu de desenvolvedor, que não servem para quem usa a tela.
+[client]
+toolbarMode = "minimal"

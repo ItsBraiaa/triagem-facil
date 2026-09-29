@@ -11,6 +11,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # (env_file do compose.yaml).
 COPY triagem.py chamados.py app.py bot.py ./
 
+# Tema e barra de ferramentas da tela (.streamlit/config.toml). O address = "localhost" desse
+# arquivo não vale no contêiner: o --server.address=0.0.0.0 da linha de comando (compose.yaml
+# e CMD abaixo) tem precedência sobre o arquivo.
+COPY .streamlit ./.streamlit
+
 EXPOSE 8501
 
 # Comando padrão: a tela. O serviço "bot" do compose.yaml troca por "python bot.py".
